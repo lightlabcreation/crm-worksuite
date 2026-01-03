@@ -29,9 +29,13 @@ const getAll = async (req, res) => {
       params.push(start_date, end_date);
     }
 
-    // For employee dashboard - show only events assigned to this employee
+    // For employee dashboard - show events assigned to this employee OR all company events (for "all team" events)
     if (for_employee && user_id) {
-      whereClause += ` AND e.id IN (SELECT event_id FROM event_employees WHERE user_id = ?)`;
+      // Show events where employee is specifically assigned OR events with no specific assignments (all team)
+      whereClause += ` AND (
+        e.id IN (SELECT event_id FROM event_employees WHERE user_id = ?)
+        OR e.id NOT IN (SELECT DISTINCT event_id FROM event_employees)
+      )`;
       params.push(user_id);
     }
 
@@ -131,7 +135,11 @@ const create = async (req, res) => {
       status,
       event_link,
       eventLink,
-      lead_id
+      lead_id,
+      share_with,
+      shareWith,
+      labels,
+      repeat
     } = req.body;
 
     // Use the correct field names (support both formats)
@@ -145,12 +153,28 @@ const create = async (req, res) => {
     const endDate = ends_on_date || end_date;
     const endTime = ends_on_time || end_time;
     const departments = department_ids || req.body.department || [];
-    const employees = employee_ids || select_employee || [];
-    const clients = client_ids || select_client || [];
+    let employees = employee_ids || select_employee || [];
+    let clients = client_ids || select_client || [];
     const userId = req.query.user_id || req.body.user_id || req.userId || req.user?.id || null;
     const companyId = req.query.company_id || req.body.company_id || req.companyId || 1;
     const eventStatus = status || 'Pending';
     const link = event_link || eventLink || null;
+    const eventShareWith = share_with || shareWith || 'only_me';
+    const eventLabels = labels || '';
+    const eventRepeat = repeat || false;
+
+    // Handle shareWith logic - if "all_team", get all employees
+    if (eventShareWith === 'all_team') {
+      try {
+        const [allEmployees] = await connection.execute(
+          `SELECT id FROM users WHERE company_id = ? AND role = 'EMPLOYEE' AND is_deleted = 0`,
+          [companyId]
+        );
+        employees = allEmployees.map(e => e.id);
+      } catch (err) {
+        console.warn('Could not fetch all employees for all_team share:', err.message);
+      }
+    }
 
     if (!eventName || !location || !startDate || !startTime || !endDate || !endTime) {
       await connection.rollback();

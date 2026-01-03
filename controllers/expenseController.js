@@ -4,9 +4,10 @@ const pool = require('../config/db');
  * Generate expense number
  */
 const generateExpenseNumber = async (companyId) => {
+  // Get max expense number including deleted ones to avoid duplicates
   const [result] = await pool.execute(
-    `SELECT MAX(CAST(SUBSTRING(expense_number, 5) AS UNSIGNED)) as max_num FROM expenses WHERE company_id = ? AND expense_number LIKE 'EXP#%'`,
-    [companyId]
+    `SELECT MAX(CAST(SUBSTRING(expense_number, 5) AS UNSIGNED)) as max_num FROM expenses WHERE expense_number LIKE 'EXP#%'`,
+    []
   );
   const nextNum = (result[0].max_num || 0) + 1;
   return `EXP#${String(nextNum).padStart(3, '0')}`;
@@ -60,16 +61,18 @@ const getAll = async (req, res) => {
       params.push(status);
     }
 
-    // Get all expenses with lead information
+    // Get all expenses with client, project, and employee information
     let expenses = [];
     try {
       const [expensesResult] = await pool.execute(
         `SELECT e.*, 
-                l.name as lead_name, 
-                l.company_name as lead_company_name,
-                l.email as lead_email
+                c.company_name as client_name,
+                p.project_name as project_name,
+                u.name as employee_name
          FROM expenses e
-         LEFT JOIN leads l ON e.lead_id = l.id
+         LEFT JOIN clients c ON e.client_id = c.id
+         LEFT JOIN projects p ON e.project_id = p.id
+         LEFT JOIN users u ON e.employee_id = u.id
          ${whereClause}
          ORDER BY e.created_at DESC`,
         params
@@ -83,27 +86,6 @@ const getAll = async (req, res) => {
         params
       );
       expenses = expensesResult || [];
-    }
-
-    // Get items for each expense
-    for (let expense of expenses) {
-      try {
-        const [items] = await pool.execute(
-          `SELECT * FROM expense_items WHERE expense_id = ?`,
-          [expense.id]
-        );
-        expense.items = items || [];
-      } catch (itemError) {
-        console.warn(`Error fetching items for expense ${expense.id}:`, itemError.message);
-        expense.items = [];
-      }
-      
-      // Set lead_contact from lead information - prioritize company_name
-      if (expense.lead_company_name || expense.lead_name) {
-        expense.lead_contact = expense.lead_company_name || expense.lead_name || expense.lead_email || 'N/A';
-      } else {
-        expense.lead_contact = expense.lead_contact || 'N/A';
-      }
     }
 
     res.json({
@@ -124,49 +106,37 @@ const getAll = async (req, res) => {
 const create = async (req, res) => {
   try {
     const {
-      company_id, lead_id, deal_id, deal_name, valid_till, currency, calculate_tax, description,
-      note, terms, discount, discount_type, require_approval, items = []
+      company_id, expense_date, category, amount, title, description,
+      client_id, project_id, employee_id, tax, second_tax, is_recurring
     } = req.body;
 
-    // Removed required validations - allow empty data
     const companyId = req.body.company_id || req.companyId || 1;
-    
-    // Handle deal_id - if deal_name is provided but deal_id is not, set deal_id to null
-    // (deal_name is just for display, we store deal_id)
-    const effectiveDealId = deal_id || null;
 
     // Generate expense number
     const expense_number = await generateExpenseNumber(companyId);
 
-    // Calculate totals
-    const totals = calculateTotals(items, discount || 0, discount_type || '%');
-
-    // Insert expense - convert undefined to null for SQL
+    // Insert expense with new fields
     const [result] = await pool.execute(
       `INSERT INTO expenses (
-        company_id, expense_number, lead_id, deal_id, valid_till, currency,
-        calculate_tax, description, note, terms, discount, discount_type,
-        sub_total, discount_amount, tax_amount, total, require_approval,
-        status, created_by
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        company_id, expense_number, expense_date, category, amount, title, description,
+        client_id, project_id, employee_id, tax, second_tax, is_recurring,
+        total, status, created_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         companyId,
         expense_number,
-        lead_id ?? null,
-        effectiveDealId,
-        valid_till ?? null,
-        currency || 'USD',
-        calculate_tax || 'After Discount',
+        expense_date || new Date().toISOString().split('T')[0],
+        category ?? null,
+        parseFloat(amount) || 0,
+        title ?? null,
         description ?? null,
-        note ?? null,
-        terms || 'Thank you for your business.',
-        discount ?? 0,
-        discount_type || '%',
-        totals.sub_total,
-        totals.discount_amount,
-        totals.tax_amount,
-        totals.total,
-        require_approval ?? 1,
+        client_id ?? null,
+        project_id ?? null,
+        employee_id ?? null,
+        tax ?? null,
+        second_tax ?? null,
+        is_recurring ?? 0,
+        parseFloat(amount) || 0,
         'Pending',
         req.userId || req.body.user_id || req.query.user_id || 1
       ]
@@ -174,75 +144,15 @@ const create = async (req, res) => {
 
     const expenseId = result.insertId;
 
-    // Insert items - calculate amount if not provided
-    if (items.length > 0) {
-      const itemValues = items.map(item => {
-        const quantity = parseFloat(item.quantity || 1);
-        const unitPrice = parseFloat(item.unit_price || 0);
-        
-        // Extract tax rate from tax string (e.g., "GST 10%" -> 10)
-        let taxRate = 0;
-        if (item.tax) {
-          const taxMatch = item.tax.match(/(\d+(?:\.\d+)?)/);
-          if (taxMatch) {
-            taxRate = parseFloat(taxMatch[1]);
-          }
-        }
-        
-        // Calculate amount: (quantity * unit_price) + tax
-        let amount = quantity * unitPrice;
-        if (taxRate > 0) {
-          amount += (amount * taxRate / 100);
-        }
-        
-        // Use provided amount if available, otherwise use calculated amount
-        const finalAmount = item.amount !== undefined && item.amount !== null 
-          ? parseFloat(item.amount) 
-          : amount;
-        
-        return [
-          expenseId,
-          item.item_name || item.itemName || item.description || 'Expense Item',
-          item.description || null,
-          quantity,
-          item.unit || 'Pcs',
-          unitPrice,
-          item.tax || null,
-          taxRate,
-          item.file_path || null,
-          finalAmount
-        ];
-      });
-
-      // Insert items one by one (mysql2 doesn't support VALUES ? syntax)
-      for (const itemValue of itemValues) {
-        await pool.execute(
-          `INSERT INTO expense_items (
-            expense_id, item_name, description, quantity, unit, unit_price,
-            tax, tax_rate, file_path, amount
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          itemValue
-        );
-      }
-    }
-
-    // Get created expense with items
+    // Get created expense
     const [expenses] = await pool.execute(
       `SELECT * FROM expenses WHERE id = ?`,
       [expenseId]
     );
 
-    const [expenseItems] = await pool.execute(
-      `SELECT * FROM expense_items WHERE expense_id = ?`,
-      [expenseId]
-    );
-
-    const expense = expenses[0];
-    expense.items = expenseItems;
-
     res.status(201).json({
       success: true,
-      data: expense,
+      data: expenses[0],
       message: 'Expense created successfully'
     });
   } catch (error) {
@@ -426,8 +336,8 @@ const update = async (req, res) => {
   try {
     const { id } = req.params;
     const {
-      company_id, lead_id, deal_id, valid_till, currency, calculate_tax, description,
-      note, terms, discount, discount_type, require_approval, items = []
+      company_id, expense_date, category, amount, title, description,
+      client_id, project_id, employee_id, tax, second_tax, is_recurring
     } = req.body;
 
     const companyId = company_id || req.query.company_id || 1;
@@ -445,74 +355,35 @@ const update = async (req, res) => {
       });
     }
 
-    // Calculate totals
-    const totals = calculateTotals(items, discount || 0, discount_type || '%');
-
-    // Update expense
+    // Update expense with new fields
     await pool.execute(
       `UPDATE expenses SET
-        lead_id = ?, deal_id = ?, valid_till = ?, currency = ?,
-        calculate_tax = ?, description = ?, note = ?, terms = ?,
-        discount = ?, discount_type = ?, require_approval = ?,
-        sub_total = ?, discount_amount = ?, tax_amount = ?, total = ?,
-        updated_at = CURRENT_TIMESTAMP
+        expense_date = ?, category = ?, amount = ?, title = ?, description = ?,
+        client_id = ?, project_id = ?, employee_id = ?, tax = ?, second_tax = ?,
+        is_recurring = ?, total = ?, updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
       [
-        lead_id ?? null,
-        deal_id ?? null,
-        valid_till,
-        currency || 'USD',
-        calculate_tax || 'After Discount',
+        expense_date || new Date().toISOString().split('T')[0],
+        category ?? null,
+        parseFloat(amount) || 0,
+        title ?? null,
         description ?? null,
-        note ?? null,
-        terms ?? null,
-        discount ?? 0,
-        discount_type || '%',
-        require_approval ?? 1,
-        totals.sub_total,
-        totals.discount_amount,
-        totals.tax_amount,
-        totals.total,
+        client_id ?? null,
+        project_id ?? null,
+        employee_id ?? null,
+        tax ?? null,
+        second_tax ?? null,
+        is_recurring ?? 0,
+        parseFloat(amount) || 0,
         id
       ]
     );
-
-    // Update items - delete old and insert new
-    if (items && items.length > 0) {
-      await pool.execute(`DELETE FROM expense_items WHERE expense_id = ?`, [id]);
-      
-      const itemValues = items.map(item => [
-        id,
-        item.item_name || item.description || '',
-        item.description || null,
-        item.quantity || 1,
-        item.unit || 'Pcs',
-        item.unit_price || 0,
-        item.tax || null,
-        item.tax_rate || 0,
-        item.file_path || null,
-        item.amount || 0
-      ]);
-
-      await pool.query(
-        `INSERT INTO expense_items (
-          expense_id, item_name, description, quantity, unit, unit_price, tax, tax_rate, file_path, amount
-        ) VALUES ?`,
-        [itemValues]
-      );
-    }
 
     // Get updated expense
     const [expenses] = await pool.execute(
       `SELECT * FROM expenses WHERE id = ?`,
       [id]
     );
-
-    const [expenseItems] = await pool.execute(
-      `SELECT * FROM expense_items WHERE expense_id = ?`,
-      [id]
-    );
-    expenses[0].items = expenseItems;
 
     res.json({
       success: true,

@@ -371,7 +371,13 @@ const create = async (req, res) => {
 const update = async (req, res) => {
   try {
     const { id } = req.params;
-    const updateFields = req.body;
+    const rawFields = req.body || {};
+    
+    // Sanitize all fields - convert undefined to null
+    const updateFields = {};
+    for (const [key, value] of Object.entries(rawFields)) {
+      updateFields[key] = value === undefined ? null : value;
+    }
 
     // Check if estimate exists
     const [estimates] = await pool.execute(
@@ -398,8 +404,9 @@ const update = async (req, res) => {
     for (const field of allowedFields) {
       if (updateFields.hasOwnProperty(field)) {
         updates.push(`${field} = ?`);
-        // Convert undefined to null for SQL
-        values.push(updateFields[field] === undefined ? null : updateFields[field]);
+        // Ensure no undefined values
+        const val = updateFields[field];
+        values.push(val === undefined ? null : val);
       }
     }
 
@@ -503,7 +510,8 @@ const update = async (req, res) => {
     });
   } catch (error) {
     console.error('Update estimate error:', error);
-    res.status(500).json({ success: false, error: 'Failed to update estimate' });
+    console.error('Error details:', error.message);
+    res.status(500).json({ success: false, error: 'Failed to update estimate', details: error.message });
   }
 };
 

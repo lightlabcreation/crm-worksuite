@@ -372,7 +372,12 @@ const update = async (req, res) => {
       }
       if (joining_date !== undefined) {
         empUpdateFields.push('joining_date = ?');
-        empUpdateValues.push(joining_date || null);
+        // Convert ISO date string to MySQL date format
+        let formattedDate = null;
+        if (joining_date) {
+          formattedDate = joining_date.split('T')[0];
+        }
+        empUpdateValues.push(formattedDate);
       }
       if (salary !== undefined) {
         empUpdateFields.push('salary = ?');
@@ -842,6 +847,13 @@ const getDashboardStats = async (req, res) => {
       [userId, companyId]
     );
 
+    // My Documents count
+    const documentsCount = await safeQuery(
+      `SELECT COUNT(*) as total FROM documents
+       WHERE company_id = ? AND uploaded_by = ? AND is_deleted = 0`,
+      [companyId, userId]
+    );
+
     // Calculate attendance percentage
     const totalDays = attendanceMonth[0]?.total_days || 0;
     const presentDays = attendanceMonth[0]?.present_days || 0;
@@ -859,7 +871,8 @@ const getDashboardStats = async (req, res) => {
         attendance_percentage: attendancePercentage,
         leave_requests: leaveRequestsCount,
         upcoming_events: upcomingEvents[0]?.total || 0,
-        unread_messages: unreadMessages[0]?.total || 0
+        unread_messages: unreadMessages[0]?.total || 0,
+        my_documents: documentsCount[0]?.total || 0
       }
     });
   } catch (error) {

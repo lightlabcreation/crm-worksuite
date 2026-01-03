@@ -5,8 +5,11 @@
 const express = require('express');
 const router = express.Router();
 const superAdminController = require('../controllers/superAdminController');
+const { verifyToken, requireRole, ROLES } = require('../middleware/auth');
 
-// No authentication required - all routes are public
+// All SuperAdmin routes require authentication and SUPERADMIN role
+router.use(verifyToken);
+router.use(requireRole(ROLES.SUPERADMIN));
 
 // Companies Management
 router.get('/companies', superAdminController.getAllCompanies);

@@ -63,10 +63,17 @@ const getAll = async (req, res) => {
       params.push(companyId);
     }
 
-    // For clients, show their tickets; if some tickets have null client_id, include those too so they are visible
+    // For clients, show only their assigned tickets
     if (clientId) {
-      whereClause += ' AND (t.client_id = ? OR t.client_id IS NULL)';
+      whereClause += ' AND t.client_id = ?';
       params.push(clientId);
+    }
+
+    // For employees, show tickets assigned to them
+    const assignedToId = req.query.assigned_to_id || req.body.assigned_to_id;
+    if (assignedToId) {
+      whereClause += ' AND t.assigned_to_id = ?';
+      params.push(assignedToId);
     }
 
     if (status) {
@@ -110,11 +117,12 @@ const create = async (req, res) => {
       const companyId = req.query.company_id || req.body.company_id || 1;
       const userId = req.query.user_id || req.body.user_id || req.body.created_by || req.userId || 1;
       const ticket_id = await generateTicketId(companyId, retryCount);
-      const { subject, client_id, priority, description, status, assigned_to_id } = req.body;
+      const { subject, client_id, priority, description, status, assigned_to_id, ticket_type } = req.body;
 
       const safeSubject = subject && subject.trim() ? subject.trim() : 'Ticket';
       const safePriority = priority && priority.trim() ? priority : 'Medium';
       const safeStatus = status && status.trim() ? status : 'Open';
+      const safeTicketType = ticket_type && ticket_type.trim() ? ticket_type : 'General Support';
 
       // Validate client_id against company; if invalid, set to null to avoid FK issues
       let finalClientId = client_id ?? null;
@@ -136,8 +144,8 @@ const create = async (req, res) => {
       }
 
       const [result] = await pool.execute(
-        `INSERT INTO tickets (company_id, ticket_id, subject, client_id, priority, description, status, assigned_to_id, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO tickets (company_id, ticket_id, subject, client_id, priority, description, status, assigned_to_id, created_by, ticket_type)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           companyId,
           ticket_id,
@@ -147,7 +155,8 @@ const create = async (req, res) => {
           description ?? null,
           safeStatus,
           assigned_to_id ?? null,
-          userId ?? null
+          userId ?? null,
+          safeTicketType
         ]
       );
       

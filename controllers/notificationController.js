@@ -34,6 +34,23 @@ const getAll = async (req, res) => {
       params.push(type);
     }
 
+    // Filter by related entity if provided
+    if (req.query.related_entity_type) {
+      whereClause += ' AND n.related_entity_type = ?';
+      params.push(req.query.related_entity_type);
+    }
+
+    if (req.query.related_entity_id) {
+      whereClause += ' AND n.related_entity_id = ?';
+      params.push(req.query.related_entity_id);
+    }
+
+    // Filter by company_id if provided
+    if (req.query.company_id) {
+      whereClause += ' AND n.company_id = ?';
+      params.push(req.query.company_id);
+    }
+
     // Get all notifications without pagination
     const [notifications] = await pool.execute(
       `SELECT n.*, u.name as created_by_name
@@ -50,6 +67,14 @@ const getAll = async (req, res) => {
     });
   } catch (error) {
     console.error('Get notifications error:', error);
+    console.error('Error details:', error.sqlMessage || error.message);
+    // If error is due to missing columns, return empty array instead of error
+    if (error.sqlMessage && (error.sqlMessage.includes('Unknown column') || error.sqlMessage.includes('related_entity'))) {
+      return res.json({
+        success: true,
+        data: []
+      });
+    }
     res.status(500).json({
       success: false,
       error: 'Failed to fetch notifications'

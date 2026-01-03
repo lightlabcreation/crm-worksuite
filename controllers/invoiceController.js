@@ -511,12 +511,19 @@ const create = async (req, res) => {
 const update = async (req, res) => {
   try {
     const { id } = req.params;
-    const updateFields = req.body;
+    const rawFields = req.body || {};
+    const companyId = req.body.company_id || req.query.company_id || req.companyId || 1;
+    
+    // Sanitize all fields - convert undefined to null
+    const updateFields = {};
+    for (const [key, value] of Object.entries(rawFields)) {
+      updateFields[key] = value === undefined ? null : value;
+    }
 
     // Check if invoice exists
     const [invoices] = await pool.execute(
       `SELECT id FROM invoices WHERE id = ? AND company_id = ? AND is_deleted = 0`,
-      [id, req.companyId]
+      [id, companyId]
     );
 
     if (invoices.length === 0) {
@@ -526,13 +533,26 @@ const update = async (req, res) => {
       });
     }
 
-    // Build update query
-    const allowedFields = [
+    // Check which columns exist in database
+    const [columns] = await pool.execute(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+       WHERE TABLE_NAME = 'invoices' AND TABLE_SCHEMA = DATABASE()`
+    );
+    const columnNames = columns.map(col => col.COLUMN_NAME);
+
+    // Build update query - only include fields that exist in the database
+    const baseAllowedFields = [
       'invoice_date', 'due_date', 'currency', 'exchange_rate', 'client_id',
       'project_id', 'calculate_tax', 'bank_account', 'payment_details',
       'billing_address', 'shipping_address', 'note', 'terms', 'discount',
-      'discount_type', 'status', 'labels', 'tax', 'tax_rate', 'second_tax',
-      'second_tax_rate', 'tds', 'is_recurring'
+      'discount_type', 'status', 'is_recurring'
+    ];
+    
+    // Only add optional fields if they exist in the database
+    const optionalFields = ['tax', 'tax_rate', 'second_tax', 'second_tax_rate', 'tds', 'labels'];
+    const allowedFields = [
+      ...baseAllowedFields,
+      ...optionalFields.filter(f => columnNames.includes(f))
     ];
 
     const updates = [];
@@ -541,8 +561,9 @@ const update = async (req, res) => {
     for (const field of allowedFields) {
       if (updateFields.hasOwnProperty(field)) {
         updates.push(`${field} = ?`);
-        // Convert undefined to null for SQL
-        values.push(updateFields[field] === undefined ? null : updateFields[field]);
+        // Ensure no undefined values
+        const val = updateFields[field];
+        values.push(val === undefined ? null : val);
       }
     }
 
@@ -603,7 +624,7 @@ const update = async (req, res) => {
 
     if (updates.length > 0) {
       updates.push('updated_at = CURRENT_TIMESTAMP');
-      values.push(id, req.companyId);
+      values.push(id, companyId);
 
       await pool.execute(
         `UPDATE invoices SET ${updates.join(', ')} WHERE id = ? AND company_id = ?`,
@@ -639,19 +660,29 @@ const update = async (req, res) => {
 const deleteInvoice = async (req, res) => {
   try {
     const { id } = req.params;
+    const companyId = req.query.company_id || req.companyId || 1;
 
-    const [result] = await pool.execute(
-      `UPDATE invoices SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP
-       WHERE id = ? AND company_id = ?`,
-      [id, req.companyId]
+    // First check if invoice exists (without company_id filter for flexibility)
+    const [existing] = await pool.execute(
+      `SELECT id, company_id FROM invoices WHERE id = ? AND is_deleted = 0`,
+      [id]
     );
 
-    if (result.affectedRows === 0) {
+    if (existing.length === 0) {
       return res.status(404).json({
         success: false,
         error: 'Invoice not found'
       });
     }
+
+    // Use the invoice's own company_id for the update
+    const invoiceCompanyId = existing[0].company_id;
+
+    const [result] = await pool.execute(
+      `UPDATE invoices SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ? AND company_id = ?`,
+      [id, invoiceCompanyId]
+    );
 
     res.json({
       success: true,

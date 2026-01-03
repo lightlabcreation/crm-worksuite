@@ -187,7 +187,9 @@ const getCurrentUser = async (req, res) => {
     const [users] = await pool.execute(
       `SELECT u.id, u.company_id, u.name, u.email, u.role, u.status, u.avatar, u.phone, u.address,
               u.emergency_contact_name, u.emergency_contact_phone, u.emergency_contact_relation,
-              u.bank_name, u.bank_account_number, u.bank_ifsc, u.bank_branch, u.created_at,
+              u.bank_name, u.bank_account_number, u.bank_ifsc, u.bank_branch,
+              u.billing_address, u.billing_city, u.billing_state, u.billing_country, u.billing_postal_code,
+              u.created_at,
               e.department_id, e.position_id,
               d.name as department_name,
               p.name as position_name,
@@ -227,6 +229,11 @@ const getCurrentUser = async (req, res) => {
       bank_account_number: user.bank_account_number,
       bank_ifsc: user.bank_ifsc,
       bank_branch: user.bank_branch,
+      billing_address: user.billing_address,
+      billing_city: user.billing_city,
+      billing_state: user.billing_state,
+      billing_country: user.billing_country,
+      billing_postal_code: user.billing_postal_code,
       department_id: user.department_id,
       department: user.department_name,
       position_id: user.position_id,
@@ -257,7 +264,8 @@ const updateCurrentUser = async (req, res) => {
     const { 
       name, email, phone, address,
       emergency_contact_name, emergency_contact_phone, emergency_contact_relation,
-      bank_name, bank_account_number, bank_ifsc, bank_branch
+      bank_name, bank_account_number, bank_ifsc, bank_branch,
+      billing_address, billing_city, billing_state, billing_country, billing_postal_code
     } = req.body;
 
     // Build update fields
@@ -320,6 +328,26 @@ const updateCurrentUser = async (req, res) => {
     if (bank_branch !== undefined) {
       updateFields.push('bank_branch = ?');
       updateValues.push(bank_branch || null);
+    }
+    if (billing_address !== undefined) {
+      updateFields.push('billing_address = ?');
+      updateValues.push(billing_address || null);
+    }
+    if (billing_city !== undefined) {
+      updateFields.push('billing_city = ?');
+      updateValues.push(billing_city || null);
+    }
+    if (billing_state !== undefined) {
+      updateFields.push('billing_state = ?');
+      updateValues.push(billing_state || null);
+    }
+    if (billing_country !== undefined) {
+      updateFields.push('billing_country = ?');
+      updateValues.push(billing_country || null);
+    }
+    if (billing_postal_code !== undefined) {
+      updateFields.push('billing_postal_code = ?');
+      updateValues.push(billing_postal_code || null);
     }
 
     if (updateFields.length === 0) {

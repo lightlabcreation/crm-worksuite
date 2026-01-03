@@ -38,11 +38,13 @@ const getAll = async (req, res) => {
 
     // Get all payments without pagination
     const [payments] = await pool.execute(
-      `SELECT p.*, i.invoice_number, c.company_name as client_name, comp.name as company_name
+      `SELECT p.*, i.invoice_number, c.company_name as client_name, comp.name as company_name,
+       pr.project_name
        FROM payments p
        LEFT JOIN invoices i ON p.invoice_id = i.id
        LEFT JOIN clients c ON i.client_id = c.id
        LEFT JOIN companies comp ON p.company_id = comp.id
+       LEFT JOIN projects pr ON p.project_id = pr.id
        ${whereClause}
        ORDER BY p.created_at DESC`,
       params

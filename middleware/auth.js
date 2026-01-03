@@ -87,7 +87,7 @@ const verifyToken = async (req, res, next) => {
  * @param {string|string[]} roles - Role(s) allowed
  */
 const requireRole = (roles) => {
-  const allowedRoles = Array.isArray(roles) ? roles : [roles];
+  const allowedRoles = Array.isArray(roles) ? roles.map(r => r.toUpperCase()) : [roles.toUpperCase()];
 
   return (req, res, next) => {
     if (!req.user) {
@@ -97,15 +97,89 @@ const requireRole = (roles) => {
       });
     }
 
-    if (!allowedRoles.includes(req.user.role)) {
+    const userRole = (req.user.role || '').toUpperCase();
+    if (!allowedRoles.includes(userRole)) {
       return res.status(403).json({
         success: false,
-        error: `Access denied. Required role: ${allowedRoles.join(' or ')}`
+        error: `Access denied. Required role: ${allowedRoles.join(' or ')}. Your role: ${userRole}`
       });
     }
 
     next();
   };
+};
+
+/**
+ * Role constants for easy reference
+ */
+const ROLES = {
+  SUPERADMIN: 'SUPERADMIN',
+  ADMIN: 'ADMIN',
+  EMPLOYEE: 'EMPLOYEE',
+  CLIENT: 'CLIENT'
+};
+
+/**
+ * Middleware to ensure user can only access their own data
+ * For Employee and Client roles
+ */
+const requireOwnData = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({
+      success: false,
+      error: 'Authentication required'
+    });
+  }
+
+  const userRole = (req.user.role || '').toUpperCase();
+  
+  // SuperAdmin and Admin can access any data
+  if (userRole === ROLES.SUPERADMIN || userRole === ROLES.ADMIN) {
+    return next();
+  }
+
+  // Employee and Client can only access their own data
+  const requestedUserId = req.params.userId || req.params.id || req.query.user_id || req.body.user_id;
+  
+  if (requestedUserId && parseInt(requestedUserId) !== req.userId) {
+    return res.status(403).json({
+      success: false,
+      error: 'Access denied. You can only access your own data.'
+    });
+  }
+
+  next();
+};
+
+/**
+ * Middleware to ensure Admin can only access their company data
+ */
+const requireCompanyAccess = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({
+      success: false,
+      error: 'Authentication required'
+    });
+  }
+
+  const userRole = (req.user.role || '').toUpperCase();
+  
+  // SuperAdmin can access any company
+  if (userRole === ROLES.SUPERADMIN) {
+    return next();
+  }
+
+  // For other roles, check company_id matches
+  const requestedCompanyId = req.params.companyId || req.query.company_id || req.body.company_id;
+  
+  if (requestedCompanyId && parseInt(requestedCompanyId) !== req.companyId) {
+    return res.status(403).json({
+      success: false,
+      error: 'Access denied. You can only access your own company data.'
+    });
+  }
+
+  next();
 };
 
 /**
@@ -160,6 +234,9 @@ const optionalAuth = async (req, res, next) => {
 module.exports = {
   verifyToken,
   requireRole,
-  optionalAuth
+  optionalAuth,
+  requireOwnData,
+  requireCompanyAccess,
+  ROLES
 };
 

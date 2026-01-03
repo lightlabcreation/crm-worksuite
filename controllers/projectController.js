@@ -709,9 +709,9 @@ const uploadFile = async (req, res) => {
     const companyId = req.query.company_id || req.body.company_id || 1;
     
     const [result] = await pool.execute(
-      `INSERT INTO documents (company_id, name, file_path, file_size, file_type, project_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, NOW())`,
-      [companyId, fileName, filePath, fileSize, fileType, id]
+      `INSERT INTO documents (company_id, project_id, title, file_name, file_path, file_size, file_type, description, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+      [companyId, id, fileName, fileName, filePath, fileSize, fileType, description || null]
     );
 
     res.status(201).json({

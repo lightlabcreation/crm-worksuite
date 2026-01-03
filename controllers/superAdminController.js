@@ -394,11 +394,11 @@ const getSystemStats = async (req, res) => {
     try {
       const [result] = await pool.execute(
         `SELECT 
-          DATE_FORMAT(payment_date, '%Y-%m') as month,
+          DATE_FORMAT(paid_on, '%Y-%m') as month,
           SUM(amount) as total_revenue
          FROM payments
-         WHERE is_deleted = 0 AND payment_date IS NOT NULL
-         GROUP BY DATE_FORMAT(payment_date, '%Y-%m')
+         WHERE is_deleted = 0 AND paid_on IS NOT NULL
+         GROUP BY DATE_FORMAT(paid_on, '%Y-%m')
          ORDER BY month DESC
          LIMIT 6`
       )

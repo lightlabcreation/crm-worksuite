@@ -16,14 +16,115 @@ const safeQuery = async (query, params, defaultValue = [{ total: 0 }]) => {
 };
 
 /**
+ * Get SuperAdmin Dashboard - Access to ALL data across system
+ * GET /api/v1/dashboard/superadmin
+ * No company filtering - sees everything
+ */
+const getSuperAdminDashboard = async (req, res) => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+
+    // Get system-wide statistics (NO company filter)
+    const [
+      totalCompanies,
+      totalUsers,
+      totalClients,
+      totalProjects,
+      totalInvoices,
+      totalRevenue,
+      activeUsers,
+      recentCompanies
+    ] = await Promise.all([
+      safeQuery(`SELECT COUNT(*) as total FROM companies WHERE is_deleted = 0`, []),
+      safeQuery(`SELECT COUNT(*) as total FROM users WHERE is_deleted = 0`, []),
+      safeQuery(`SELECT COUNT(*) as total FROM clients WHERE is_deleted = 0`, []),
+      safeQuery(`SELECT COUNT(*) as total FROM projects WHERE is_deleted = 0`, []),
+      safeQuery(`SELECT COUNT(*) as total FROM invoices WHERE is_deleted = 0`, []),
+      safeQuery(`SELECT COALESCE(SUM(paid), 0) as total FROM invoices WHERE is_deleted = 0`, []),
+      safeQuery(`SELECT COUNT(*) as total FROM users WHERE status = 'Active' AND is_deleted = 0`, []),
+      safeQuery(`SELECT id, name, created_at FROM companies WHERE is_deleted = 0 ORDER BY created_at DESC LIMIT 5`, [], [])
+    ]);
+
+    // Users by role (system-wide)
+    const usersByRole = await safeQuery(
+      `SELECT role, COUNT(*) as count FROM users WHERE is_deleted = 0 GROUP BY role`,
+      [],
+      []
+    );
+
+    // Companies with most users
+    const topCompanies = await safeQuery(
+      `SELECT c.id, c.name, COUNT(u.id) as user_count 
+       FROM companies c 
+       LEFT JOIN users u ON c.id = u.company_id AND u.is_deleted = 0
+       WHERE c.is_deleted = 0 
+       GROUP BY c.id 
+       ORDER BY user_count DESC 
+       LIMIT 5`,
+      [],
+      []
+    );
+
+    // Recent attendance across all companies
+    const recentAttendance = await safeQuery(
+      `SELECT a.*, u.name as user_name, c.name as company_name
+       FROM attendance a
+       LEFT JOIN users u ON a.user_id = u.id
+       LEFT JOIN companies c ON a.company_id = c.id
+       WHERE a.is_deleted = 0 AND DATE(a.check_in) = ?
+       ORDER BY a.check_in DESC LIMIT 10`,
+      [today],
+      []
+    );
+
+    res.json({
+      success: true,
+      data: {
+        overview: {
+          totalCompanies: totalCompanies[0]?.total || 0,
+          totalUsers: totalUsers[0]?.total || 0,
+          totalClients: totalClients[0]?.total || 0,
+          totalProjects: totalProjects[0]?.total || 0,
+          totalInvoices: totalInvoices[0]?.total || 0,
+          totalRevenue: parseFloat(totalRevenue[0]?.total || 0),
+          activeUsers: activeUsers[0]?.total || 0
+        },
+        usersByRole: usersByRole.reduce((acc, item) => {
+          acc[item.role] = item.count;
+          return acc;
+        }, {}),
+        topCompanies: topCompanies,
+        recentCompanies: recentCompanies,
+        recentAttendance: recentAttendance.map(a => ({
+          id: a.id,
+          userName: a.user_name,
+          companyName: a.company_name,
+          checkIn: a.check_in,
+          checkOut: a.check_out
+        }))
+      }
+    });
+  } catch (error) {
+    console.error('Get superadmin dashboard error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch dashboard data',
+      details: process.env.NODE_ENV !== 'production' ? error.message : undefined
+    });
+  }
+};
+
+/**
  * Get COMPLETE Admin Dashboard Data - SINGLE API
  * GET /api/v1/dashboard
  * Returns ALL dashboard data in ONE response
+ * Uses JWT data for userId and companyId
  */
 const getCompleteDashboard = async (req, res) => {
   try {
-    const companyId = req.query.company_id || req.body.company_id || 1;
-    const userId = req.query.user_id || req.body.user_id || 1;
+    // Use JWT data, fallback to query params for backward compatibility
+    const companyId = req.companyId || req.query.company_id || 1;
+    const userId = req.userId || req.query.user_id || 1;
     const today = new Date().toISOString().split('T')[0];
     const currentYear = new Date().getFullYear();
     const lastYear = currentYear - 1;
@@ -201,7 +302,7 @@ const getCompleteDashboard = async (req, res) => {
         u.name as user_name,
         p.project_name
        FROM tasks t
-       LEFT JOIN users u ON t.updated_by = u.id OR t.created_by = u.id
+       LEFT JOIN users u ON t.created_by = u.id
        LEFT JOIN projects p ON t.project_id = p.id
        WHERE t.company_id = ? AND t.is_deleted = 0
        ORDER BY t.updated_at DESC LIMIT 10`,
@@ -210,12 +311,16 @@ const getCompleteDashboard = async (req, res) => {
     );
 
     // ===== 9. EVENTS LIST =====
+    // Show upcoming events first, then recent past events
     const events = await safeQuery(
       `SELECT id, event_name, starts_on_date, starts_on_time, ends_on_date, ends_on_time, description, where_event
        FROM events 
-       WHERE company_id = ? AND starts_on_date >= ? AND is_deleted = 0
-       ORDER BY starts_on_date, starts_on_time LIMIT 10`,
-      [companyId, today],
+       WHERE company_id = ? AND is_deleted = 0
+       ORDER BY 
+         CASE WHEN starts_on_date >= ? THEN 0 ELSE 1 END,
+         ABS(DATEDIFF(starts_on_date, ?))
+       LIMIT 10`,
+      [companyId, today, today],
       []
     );
 
@@ -508,10 +613,12 @@ const saveStickyNote = async (req, res) => {
 /**
  * Get admin dashboard stats
  * GET /api/v1/dashboard/admin
+ * Uses JWT companyId - Admin can only see their company data
  */
 const getAdminDashboard = async (req, res) => {
   try {
-    const companyId = req.query.company_id || req.body.company_id || 1;
+    // Use JWT companyId for data isolation
+    const companyId = req.companyId || req.query.company_id || 1;
     
     // Use safe queries to handle missing tables gracefully
     const [
@@ -584,11 +691,20 @@ const getAdminDashboard = async (req, res) => {
 /**
  * Get employee dashboard stats
  * GET /api/v1/dashboard/employee
+ * Uses JWT userId - Employee can only see their own data
  */
 const getEmployeeDashboard = async (req, res) => {
   try {
-    const userId = req.query.user_id || req.body.user_id || 1;
-    const companyId = req.query.company_id || req.body.company_id || 1;
+    // Use JWT data for strict data isolation
+    const userId = req.userId || req.query.user_id;
+    const companyId = req.companyId || req.query.company_id || 1;
+    
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: 'User ID is required'
+      });
+    }
     const today = new Date().toISOString().split('T')[0];
 
     // Use safe queries to handle missing tables gracefully
@@ -598,17 +714,19 @@ const getEmployeeDashboard = async (req, res) => {
       timeLogs,
       events
     ] = await Promise.all([
+      // Count tasks where user is assigned OR created the task
       safeQuery(
-        `SELECT COUNT(*) as total FROM tasks t
+        `SELECT COUNT(DISTINCT t.id) as total FROM tasks t
          LEFT JOIN task_assignees ta ON t.id = ta.task_id
          WHERE (ta.user_id = ? OR t.created_by = ?) AND t.company_id = ? AND t.is_deleted = 0`,
         [userId, userId, companyId]
       ),
+      // Count distinct projects where user has tasks assigned or created
       safeQuery(
         `SELECT COUNT(DISTINCT t.project_id) as total FROM tasks t
          LEFT JOIN task_assignees ta ON t.id = ta.task_id
-         WHERE ta.user_id = ? AND t.company_id = ? AND t.is_deleted = 0 AND t.project_id IS NOT NULL`,
-        [userId, companyId]
+         WHERE (ta.user_id = ? OR t.created_by = ?) AND t.company_id = ? AND t.is_deleted = 0 AND t.project_id IS NOT NULL`,
+        [userId, userId, companyId]
       ),
       safeQuery(
         `SELECT COALESCE(SUM(hours), 0) as total_hours FROM time_logs
@@ -645,11 +763,20 @@ const getEmployeeDashboard = async (req, res) => {
 /**
  * Get client dashboard stats
  * GET /api/v1/dashboard/client
+ * Uses JWT userId - Client can only see their own data
  */
 const getClientDashboard = async (req, res) => {
   try {
-    const userId = req.query.user_id || req.body.user_id || 1;
-    const companyId = req.query.company_id || req.body.company_id || 1;
+    // Use JWT data for strict data isolation
+    const userId = req.userId || req.query.user_id;
+    const companyId = req.companyId || req.query.company_id || 1;
+    
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: 'User ID is required'
+      });
+    }
 
     console.log('Client dashboard - userId:', userId, 'companyId:', companyId);
 
@@ -753,11 +880,16 @@ const getClientDashboard = async (req, res) => {
 /**
  * Get client work data (projects and tasks)
  * GET /api/v1/dashboard/client/work
+ * Uses JWT userId - Client can only see their own data
  */
 const getClientWork = async (req, res) => {
   try {
-    const userId = req.query.user_id || req.body.user_id || 1;
-    const companyId = req.query.company_id || req.body.company_id || 1;
+    const userId = req.userId || req.query.user_id;
+    const companyId = req.companyId || req.query.company_id || 1;
+    
+    if (!userId) {
+      return res.status(400).json({ success: false, error: 'User ID is required' });
+    }
 
     // Get client ID from user - try multiple ways to find the client
     let clients = await safeQuery(
@@ -820,11 +952,16 @@ const getClientWork = async (req, res) => {
 /**
  * Get client finance data (invoices, payments, estimates, contracts, credit notes)
  * GET /api/v1/dashboard/client/finance
+ * Uses JWT userId - Client can only see their own data
  */
 const getClientFinance = async (req, res) => {
   try {
-    const userId = req.query.user_id || req.body.user_id || 1;
-    const companyId = req.query.company_id || req.body.company_id || 1;
+    const userId = req.userId || req.query.user_id;
+    const companyId = req.companyId || req.query.company_id || 1;
+    
+    if (!userId) {
+      return res.status(400).json({ success: false, error: 'User ID is required' });
+    }
 
     // Get client ID from user - try multiple ways to find the client
     let clients = await safeQuery(
@@ -925,11 +1062,12 @@ const getClientFinance = async (req, res) => {
 /**
  * Get client announcements
  * GET /api/v1/dashboard/client/announcements
+ * Uses JWT userId
  */
 const getClientAnnouncements = async (req, res) => {
   try {
-    const userId = req.query.user_id || req.body.user_id || 1;
-    const companyId = req.query.company_id || req.body.company_id || 1;
+    const userId = req.userId || req.query.user_id;
+    const companyId = req.companyId || req.query.company_id || 1;
 
     // Get announcements from notifications table
     const announcements = await safeQuery(
@@ -962,11 +1100,12 @@ const getClientAnnouncements = async (req, res) => {
 /**
  * Get client recent activity
  * GET /api/v1/dashboard/client/activity
+ * Uses JWT userId
  */
 const getClientActivity = async (req, res) => {
   try {
-    const userId = req.query.user_id || req.body.user_id || 1;
-    const companyId = req.query.company_id || req.body.company_id || 1;
+    const userId = req.userId || req.query.user_id;
+    const companyId = req.companyId || req.query.company_id || 1;
 
     // Get client ID
     let clients = await safeQuery(
@@ -1061,6 +1200,7 @@ const getClientActivity = async (req, res) => {
 };
 
 module.exports = {
+  getSuperAdminDashboard,
   getCompleteDashboard,
   getAdminDashboard,
   getEmployeeDashboard,

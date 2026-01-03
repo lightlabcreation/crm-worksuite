@@ -55,16 +55,41 @@ const optionalUpload = (req, res, next) => {
   }
 };
 
-// No authentication required - all routes are public
+// Settings Routes
+// GET all settings
 router.get('/', settingsController.get);
+
+// GET settings by category
 router.get('/category/:category', settingsController.getByCategory);
-router.put('/', 
+
+// GET export settings
+router.get('/export', settingsController.exportSettings);
+
+// GET single setting
+router.get('/:key', settingsController.getSingle);
+
+// POST initialize default settings
+router.post('/initialize', settingsController.initialize);
+
+// POST reset settings to default
+router.post('/reset', settingsController.reset);
+
+// POST import settings
+router.post('/import', settingsController.importSettings);
+
+// PUT update single setting (with optional file upload)
+router.put('/',
   optionalUpload,
   settingsController.update
 );
-router.put('/bulk', 
+
+// PUT bulk update settings
+router.put('/bulk',
   settingsController.bulkUpdate
 );
+
+// DELETE a setting
+router.delete('/:key', settingsController.deleteSetting);
 
 module.exports = router;
 

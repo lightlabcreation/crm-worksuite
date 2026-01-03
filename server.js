@@ -71,26 +71,6 @@ app.use(cors({
   credentials: true
 }));
 
-
-
-
-// const allowedOrigins = [
-//   "http://localhost:5173",
-//   "https://crm-update.netlify.app"
-// ];
-
-// app.use(cors({
-//   origin: function (origin, callback) {
-//     if (!origin) return callback(null, true); // for Postman
-//     if (allowedOrigins.includes(origin)) {
-//       callback(null, true);
-//     } else {
-//       callback(new Error("Not allowed by CORS"));
-//     }
-//   },
-//   credentials: true
-// }));
-
 // Body parser
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));

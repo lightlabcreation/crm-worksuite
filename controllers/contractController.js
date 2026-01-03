@@ -155,7 +155,8 @@ const create = async (req, res) => {
     });
   } catch (error) {
     console.error('Create contract error:', error);
-    res.status(500).json({ success: false, error: 'Failed to create contract' });
+    console.error('Error details:', error.message);
+    res.status(500).json({ success: false, error: 'Failed to create contract', details: error.message });
   }
 };
 

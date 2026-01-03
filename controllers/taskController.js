@@ -464,7 +464,37 @@ const update = async (req, res) => {
   try {
     const { id } = req.params;
     // Ensure updateFields is a plain object to avoid hasOwnProperty errors
-    const updateFields = req.body && typeof req.body === 'object' ? { ...req.body } : {};
+    const rawFields = req.body && typeof req.body === 'object' ? { ...req.body } : {};
+    
+    // Sanitize all fields - remove any NaN values
+    const updateFields = {};
+    for (const [key, value] of Object.entries(rawFields)) {
+      // Skip NaN number values
+      if (typeof value === 'number' && isNaN(value)) {
+        console.log(`Skipping NaN value for field: ${key}`);
+        continue;
+      }
+      // Convert string 'NaN', 'null', 'undefined' to null
+      if (value === 'NaN' || value === 'null' || value === 'undefined') {
+        updateFields[key] = null;
+        continue;
+      }
+      // For numeric fields, validate they're not NaN after parsing
+      if (['project_id', 'client_id', 'lead_id', 'company_id', 'points', 'assign_to'].includes(key)) {
+        if (value === null || value === '' || value === undefined) {
+          updateFields[key] = null;
+          continue;
+        }
+        const parsed = parseInt(value);
+        if (isNaN(parsed)) {
+          console.log(`Skipping invalid numeric value for field: ${key}, value: ${value}`);
+          continue;
+        }
+        updateFields[key] = parsed;
+        continue;
+      }
+      updateFields[key] = value;
+    }
 
     // Check if task exists
     const [tasks] = await pool.execute(
@@ -491,8 +521,17 @@ const update = async (req, res) => {
 
     for (const field of allowedFields) {
       if (updateFields.hasOwnProperty(field)) {
+        let value = updateFields[field];
+        // Skip NaN values
+        if (typeof value === 'number' && isNaN(value)) {
+          continue;
+        }
+        // Convert string 'NaN' to null
+        if (value === 'NaN' || value === 'null' || value === 'undefined') {
+          value = null;
+        }
         updates.push(`${field} = ?`);
-        values.push(updateFields[field]);
+        values.push(value);
       }
     }
     
@@ -518,12 +557,15 @@ const update = async (req, res) => {
       
       const allAssignees = [];
       if (updateFields.assign_to) {
-        allAssignees.push(parseInt(updateFields.assign_to));
+        const assignToId = parseInt(updateFields.assign_to);
+        if (!isNaN(assignToId) && assignToId > 0) {
+          allAssignees.push(assignToId);
+        }
       }
       if (Array.isArray(updateFields.collaborators) && updateFields.collaborators.length > 0) {
         updateFields.collaborators.forEach(userId => {
           const uid = parseInt(userId);
-          if (!allAssignees.includes(uid)) {
+          if (!isNaN(uid) && uid > 0 && !allAssignees.includes(uid)) {
             allAssignees.push(uid);
           }
         });
@@ -531,7 +573,7 @@ const update = async (req, res) => {
       if (Array.isArray(updateFields.assigned_to) && updateFields.assigned_to.length > 0) {
         updateFields.assigned_to.forEach(userId => {
           const uid = parseInt(userId);
-          if (!allAssignees.includes(uid)) {
+          if (!isNaN(uid) && uid > 0 && !allAssignees.includes(uid)) {
             allAssignees.push(uid);
           }
         });
