@@ -2,7 +2,7 @@ const pool = require('../config/db');
 
 const getAll = async (req, res) => {
   try {
-    const { year, month, start_date, end_date } = req.query;
+    const { year, month, start_date, end_date, lead_id, user_id, client_id, for_employee, for_client } = req.query;
     const companyId = req.query.company_id || req.body.company_id || 1;
     
     // No pagination - return all events
@@ -20,10 +20,7 @@ const getAll = async (req, res) => {
       const monthNum = parseInt(month); // 1-12 from frontend
       const yearNum = parseInt(year);
       const startDate = `${yearNum}-${String(monthNum).padStart(2, '0')}-01`;
-      // JavaScript Date months are 0-indexed (0=Jan, 11=Dec)
-      // To get last day of monthNum (1-12), use new Date(year, monthNum + 1, 0)
-      // This gives us day 0 of next month = last day of current month
-      const lastDay = new Date(yearNum, monthNum + 1, 0).getDate();
+      const lastDay = new Date(yearNum, monthNum, 0).getDate();
       const endDate = `${yearNum}-${String(monthNum).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
       whereClause += ' AND e.starts_on_date >= ? AND e.starts_on_date <= ?';
       params.push(startDate, endDate);
@@ -32,18 +29,17 @@ const getAll = async (req, res) => {
       params.push(start_date, end_date);
     }
 
-    // For employees, show all company events (they can see all events in their company)
-    // If you want to restrict to only assigned events, uncomment the code below:
-    /*
-    if (req.user.role === 'EMPLOYEE') {
-      whereClause += ` AND (
-        e.id IN (SELECT event_id FROM event_employees WHERE user_id = ?)
-        OR e.host_id = ?
-        OR e.created_by = ?
-      )`;
-      params.push(req.userId, req.userId, req.userId);
+    // For employee dashboard - show only events assigned to this employee
+    if (for_employee && user_id) {
+      whereClause += ` AND e.id IN (SELECT event_id FROM event_employees WHERE user_id = ?)`;
+      params.push(user_id);
     }
-    */
+
+    // For client dashboard - show only events assigned to this client
+    if (for_client && client_id) {
+      whereClause += ` AND e.id IN (SELECT event_id FROM event_clients WHERE client_id = ?)`;
+      params.push(client_id);
+    }
 
     // Get all events without pagination
     const [events] = await pool.execute(
@@ -134,11 +130,13 @@ const create = async (req, res) => {
       host,
       status,
       event_link,
-      eventLink
+      eventLink,
+      lead_id
     } = req.body;
 
     // Use the correct field names (support both formats)
     const eventName = event_name || req.body.eventName;
+    const leadId = lead_id || req.body.leadId || null;
     const labelColor = label_color || req.body.labelColor || '#FF0000';
     const location = whereLocation || req.body.where || req.body.location;
     const desc = description || req.body.description || null;
@@ -201,6 +199,7 @@ const create = async (req, res) => {
     const effectiveCreatedBy = userId || req.userId || req.user?.id || 1;
     
     // Insert event - use NULL if hostId is not provided or invalid
+    // Note: lead_id column requires database migration to be run first
     const [result] = await connection.execute(
       `INSERT INTO events (
         company_id, event_name, label_color, \`where\`, description,

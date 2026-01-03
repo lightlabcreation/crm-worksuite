@@ -12,9 +12,9 @@ const pool = require('../config/db');
  */
 const getAll = async (req, res) => {
   try {
-    const { 
-      status, 
-      client_id, 
+    const {
+      status,
+      client_id,
       company_id,
       search,
       priority,
@@ -34,14 +34,14 @@ const getAll = async (req, res) => {
 
     // Admin must provide company_id - required for filtering
     const filterCompanyId = company_id || req.query.company_id || req.body.company_id || req.companyId;
-    
+
     if (!filterCompanyId) {
       return res.status(400).json({
         success: false,
         error: 'company_id is required'
       });
     }
-    
+
     let whereClause = 'WHERE p.company_id = ? AND p.is_deleted = 0';
     const params = [filterCompanyId];
 
@@ -66,7 +66,7 @@ const getAll = async (req, res) => {
         'SELECT id FROM clients WHERE id = ? AND is_deleted = 0',
         [client_id]
       );
-      
+
       if (directClient.length > 0) {
         // It's a valid client.id
         whereClause += ' AND p.client_id = ?';
@@ -77,7 +77,7 @@ const getAll = async (req, res) => {
           'SELECT id FROM clients WHERE owner_id = ? AND company_id = ? AND is_deleted = 0',
           [client_id, filterCompanyId]
         );
-        
+
         if (clientByOwner.length > 0) {
           whereClause += ' AND p.client_id = ?';
           params.push(clientByOwner[0].id);
@@ -168,7 +168,7 @@ const getAll = async (req, res) => {
       'client_name': 'c.company_name',
       'company_name': 'comp.name'
     };
-    
+
     const sortColumn = allowedSortColumns[sort_by] || 'p.created_at';
     const sortDirection = (sort_order || 'DESC').toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
 
@@ -223,10 +223,10 @@ const getAll = async (req, res) => {
 const getById = async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     // Admin must provide company_id - required for filtering
     const companyId = req.query.company_id || req.body.company_id || req.companyId;
-    
+
     if (!companyId) {
       return res.status(400).json({
         success: false,
@@ -293,7 +293,7 @@ const generateShortCode = async (companyId) => {
        ORDER BY id DESC LIMIT 1`,
       [companyId]
     );
-    
+
     let nextNum = 1;
     if (result.length > 0 && result[0].short_code) {
       const match = result[0].short_code.match(/PRJ-?(\d+)/i);
@@ -301,7 +301,7 @@ const generateShortCode = async (companyId) => {
         nextNum = parseInt(match[1], 10) + 1;
       }
     }
-    
+
     return `PRJ${String(nextNum).padStart(3, '0')}`;
   } catch (error) {
     return `PRJ${Date.now().toString().slice(-6)}`;
@@ -340,7 +340,7 @@ const create = async (req, res) => {
     // Validate client_id if provided
     let validClientId = null;
     let createdByUserId = req.userId || req.user?.id || null;
-    
+
     if (client_id) {
       // First try to find by client.id
       const [clients] = await pool.execute(
@@ -381,7 +381,7 @@ const create = async (req, res) => {
 
     // Generate short_code if not provided
     const projectShortCode = short_code || await generateShortCode(company_id);
-    
+
     // Get default start date if not provided
     const projectStartDate = start_date || new Date().toISOString().split('T')[0];
 
@@ -595,10 +595,10 @@ const deleteProject = async (req, res) => {
 const getFilters = async (req, res) => {
   try {
     const companyId = req.query.company_id || req.companyId;
-    
+
     let whereClause = 'WHERE p.is_deleted = 0';
     const params = [];
-    
+
     if (companyId) {
       whereClause += ' AND p.company_id = ?';
       params.push(companyId);
@@ -633,6 +633,10 @@ const getFilters = async (req, res) => {
     );
 
     // Get assigned users (project managers and team members)
+    // Get assigned users (project managers and team members)
+    // whereClause is used twice in the subquery (UNION), so we need to duplicate the params
+    const userParams = [...params, ...params];
+
     const [users] = await pool.execute(
       `SELECT DISTINCT u.id, u.name, u.email
        FROM users u
@@ -643,7 +647,7 @@ const getFilters = async (req, res) => {
          INNER JOIN projects p ON pm.project_id = p.id ${whereClause}
        )
        ORDER BY u.name`,
-      params
+      userParams
     );
 
     res.json({
@@ -701,67 +705,34 @@ const uploadFile = async (req, res) => {
     const fileSize = file.size;
     const fileType = path.extname(fileName).toLowerCase();
 
-    // Check if project_files table exists, if not create entry in documents table
-    try {
-      // Try to insert into project_files table
-      const [result] = await pool.execute(
-        `INSERT INTO project_files (project_id, user_id, file_path, file_name, file_size, file_type, description)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [id, req.userId || req.user?.id || 1, filePath, fileName, fileSize, fileType, description || null]
-      );
+    // Insert into documents table (more reliable)
+    const companyId = req.query.company_id || req.body.company_id || 1;
+    
+    const [result] = await pool.execute(
+      `INSERT INTO documents (company_id, name, file_path, file_size, file_type, project_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+      [companyId, fileName, filePath, fileSize, fileType, id]
+    );
 
-      // Get created file
-      const [files] = await pool.execute(
-        `SELECT pf.*, u.name as user_name
-         FROM project_files pf
-         LEFT JOIN users u ON pf.user_id = u.id
-         WHERE pf.id = ?`,
-        [result.insertId]
-      );
-
-      res.status(201).json({
-        success: true,
-        data: files[0],
-        message: 'File uploaded successfully'
-      });
-    } catch (tableError) {
-      // If project_files table doesn't exist, use documents table
-      if (tableError.code === 'ER_NO_SUCH_TABLE') {
-        const [result] = await pool.execute(
-          `INSERT INTO documents (company_id, document_name, file_path, file_size, file_type, document_type, related_id, related_type, created_by, description)
-           VALUES (?, ?, ?, ?, ?, 'project', ?, 'project', ?, ?)`,
-          [
-            req.companyId || 1,
-            fileName,
-            filePath,
-            fileSize,
-            fileType,
-            id,
-            req.userId || req.user?.id || 1,
-            description || null
-          ]
-        );
-
-        res.status(201).json({
-          success: true,
-          data: {
-            id: result.insertId,
-            file_path: filePath,
-            file_name: fileName,
-            file_size: fileSize,
-            file_type: fileType
-          },
-          message: 'File uploaded successfully'
-        });
-      } else {
-        throw tableError;
-      }
-    }
+    res.status(201).json({
+      success: true,
+      data: {
+        id: result.insertId,
+        file_path: filePath,
+        file_name: fileName,
+        name: fileName,
+        file_size: fileSize,
+        file_type: fileType,
+        project_id: id
+      },
+      message: 'File uploaded successfully'
+    });
   } catch (error) {
     console.error('Upload project file error:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to upload file'
+      error: 'Failed to upload file',
+      details: error.message
     });
   }
 };
@@ -937,7 +908,7 @@ const getFiles = async (req, res) => {
          ORDER BY pf.created_at DESC`,
         [id]
       );
-      
+
       res.json({
         success: true,
         data: files
@@ -953,7 +924,7 @@ const getFiles = async (req, res) => {
            ORDER BY d.created_at DESC`,
           [id]
         );
-        
+
         res.json({
           success: true,
           data: files
@@ -976,11 +947,10 @@ module.exports = {
   getById,
   create,
   update,
-  delete: deleteProject,
+  deleteProject,
   getFilters,
   uploadFile,
   getMembers,
   getTasks,
   getFiles
 };
-

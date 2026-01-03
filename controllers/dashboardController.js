@@ -605,9 +605,9 @@ const getEmployeeDashboard = async (req, res) => {
         [userId, userId, companyId]
       ),
       safeQuery(
-        `SELECT COUNT(*) as total FROM projects p
-         LEFT JOIN project_members pm ON p.id = pm.project_id
-         WHERE pm.user_id = ? AND p.company_id = ? AND p.is_deleted = 0`,
+        `SELECT COUNT(DISTINCT t.project_id) as total FROM tasks t
+         LEFT JOIN task_assignees ta ON t.id = ta.task_id
+         WHERE ta.user_id = ? AND t.company_id = ? AND t.is_deleted = 0 AND t.project_id IS NOT NULL`,
         [userId, companyId]
       ),
       safeQuery(

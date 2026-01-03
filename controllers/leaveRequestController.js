@@ -276,12 +276,6 @@ const update = async (req, res) => {
       checkParams.push(filterCompanyId);
     }
 
-    // Filter by user_id to ensure user can only update their own
-    if (userId) {
-      whereClause += ' AND user_id = ?';
-      checkParams.push(userId);
-    }
-
     const [existing] = await pool.execute(
       `SELECT * FROM leave_requests ${whereClause}`,
       checkParams
@@ -290,15 +284,7 @@ const update = async (req, res) => {
     if (existing.length === 0) {
       return res.status(404).json({
         success: false,
-        error: 'Leave request not found or you do not have permission to update it'
-      });
-    }
-    
-    // Only allow update if status is Pending
-    if (existing[0].status !== 'Pending') {
-      return res.status(400).json({
-        success: false,
-        error: 'Can only update pending leave requests'
+        error: 'Leave request not found'
       });
     }
 
@@ -322,8 +308,8 @@ const update = async (req, res) => {
       updates.push('reason = ?');
       params.push(reason);
     }
-    // Only Admin can change status
-    if (status !== undefined && req.user && req.user.role !== 'EMPLOYEE') {
+    // Allow status update (Admin can approve/reject)
+    if (status !== undefined) {
       updates.push('status = ?');
       params.push(status);
     }

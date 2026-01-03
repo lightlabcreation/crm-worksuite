@@ -267,8 +267,8 @@ const create = async (req, res) => {
     const tags = parseJSON(req.body.tags, []);
     const assigned_to = parseJSON(req.body.assigned_to, []);
 
-    // Removed required validations - allow empty data
-    const taskTitle = title?.trim() || null;
+    // Provide default title if not provided (title column is NOT NULL in database)
+    const taskTitle = title?.trim() || `Task-${Date.now()}`;
 
     // ===============================
     // SAFE NULL HANDLING - All 13 Fields
@@ -463,7 +463,8 @@ const create = async (req, res) => {
 const update = async (req, res) => {
   try {
     const { id } = req.params;
-    const updateFields = req.body;
+    // Ensure updateFields is a plain object to avoid hasOwnProperty errors
+    const updateFields = req.body && typeof req.body === 'object' ? { ...req.body } : {};
 
     // Check if task exists
     const [tasks] = await pool.execute(
@@ -481,8 +482,8 @@ const update = async (req, res) => {
     // Build update query - Updated with new fields
     const allowedFields = [
       'title', 'description', 'sub_description', 'task_category', 'project_id', 
-      'company_id', 'start_date', 'due_date', 'deadline', 'status', 'priority', 
-      'estimated_time', 'completed_on', 'points'
+      'company_id', 'start_date', 'due_date', 'status', 'priority', 
+      'estimated_time', 'completed_on'
     ];
 
     const updates = [];
@@ -491,13 +492,14 @@ const update = async (req, res) => {
     for (const field of allowedFields) {
       if (updateFields.hasOwnProperty(field)) {
         updates.push(`${field} = ?`);
-        // Handle deadline mapping to due_date
-        if (field === 'deadline') {
-          values.push(updateFields['deadline']);
-        } else {
-          values.push(updateFields[field]);
-        }
+        values.push(updateFields[field]);
       }
+    }
+    
+    // Map deadline to due_date if provided
+    if (updateFields.hasOwnProperty('deadline') && !updateFields.hasOwnProperty('due_date')) {
+      updates.push('due_date = ?');
+      values.push(updateFields['deadline']);
     }
 
     if (updates.length > 0) {

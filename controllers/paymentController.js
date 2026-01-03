@@ -131,7 +131,7 @@ const create = async (req, res) => {
         company_id ?? null,
         project_id ?? null,
         invoice_id ?? null,
-        paid_on ?? null,
+        paid_on || new Date().toISOString().split('T')[0],
         amount ? parseFloat(amount) : null,
         currency || 'USD',
         exchange_rate ?? 1.0,

@@ -5,10 +5,10 @@ const pool = require('../config/db');
  */
 const generateExpenseNumber = async (companyId) => {
   const [result] = await pool.execute(
-    `SELECT COUNT(*) as count FROM expenses WHERE company_id = ?`,
+    `SELECT MAX(CAST(SUBSTRING(expense_number, 5) AS UNSIGNED)) as max_num FROM expenses WHERE company_id = ? AND expense_number LIKE 'EXP#%'`,
     [companyId]
   );
-  const nextNum = (result[0].count || 0) + 1;
+  const nextNum = (result[0].max_num || 0) + 1;
   return `EXP#${String(nextNum).padStart(3, '0')}`;
 };
 
@@ -98,11 +98,11 @@ const getAll = async (req, res) => {
         expense.items = [];
       }
       
-      // Set lead_contact from lead information
-      if (expense.lead_name || expense.lead_company_name) {
-        expense.lead_contact = expense.lead_name || expense.lead_company_name || expense.lead_email || 'N/A';
+      // Set lead_contact from lead information - prioritize company_name
+      if (expense.lead_company_name || expense.lead_name) {
+        expense.lead_contact = expense.lead_company_name || expense.lead_name || expense.lead_email || 'N/A';
       } else {
-        expense.lead_contact = 'N/A';
+        expense.lead_contact = expense.lead_contact || 'N/A';
       }
     }
 

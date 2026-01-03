@@ -283,7 +283,11 @@ const download = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const companyId = req.query.company_id || req.body.company_id || req.companyId || 1;
+    // Handle case where company_id might be an array (duplicate query params)
+    let companyId = req.query.company_id || req.body.company_id || req.companyId || 1;
+    if (Array.isArray(companyId)) {
+      companyId = companyId[0]; // Take first value if array
+    }
     const userId = req.query.user_id || req.body.user_id || req.userId || null;
     const userRole = req.query.role || req.body.role || req.user?.role || null;
 

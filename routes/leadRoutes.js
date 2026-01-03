@@ -26,6 +26,7 @@ router.delete('/labels/:label', leadController.deleteLabel);
 // Other specific routes
 router.get('/overview', leadController.getOverview);
 router.post('/bulk-action', leadController.bulkAction);
+router.post('/import', leadController.importLeads);
 
 // Parameterized routes (must come after specific routes)
 // More specific routes should come before less specific ones

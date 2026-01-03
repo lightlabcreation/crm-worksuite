@@ -326,7 +326,23 @@ const create = async (req, res) => {
     // Get created_by from various sources - body, req.userId, or default to 1 (admin)
     const effectiveCreatedBy = created_by || user_id || req.userId || 1;
 
-    // Removed required validations - allow empty data
+    // Validate client_id if provided - must exist in clients table
+    let validClientId = null;
+    if (client_id) {
+      try {
+        const [clientCheck] = await pool.execute(
+          `SELECT id FROM clients WHERE id = ?`,
+          [client_id]
+        );
+        if (clientCheck.length > 0) {
+          validClientId = client_id;
+        } else {
+          console.log(`Client ID ${client_id} not found in clients table, setting to NULL`);
+        }
+      } catch (err) {
+        console.log('Client validation error, setting client_id to NULL:', err.message);
+      }
+    }
 
     // Generate invoice number
     const invoice_number = await generateInvoiceNumber(companyIdNum);
@@ -365,7 +381,7 @@ const create = async (req, res) => {
       due_date ?? null,
       currency || 'USD',
       exchange_rate ?? 1.0,
-      client_id ?? null,
+      validClientId,
       project_id ?? null,
       calculate_tax || 'After Discount',
       bank_account ?? null,
@@ -610,7 +626,8 @@ const update = async (req, res) => {
     console.error('Update invoice error:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to update invoice'
+      error: 'Failed to update invoice',
+      details: error.message
     });
   }
 };

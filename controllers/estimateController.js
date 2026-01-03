@@ -14,7 +14,7 @@ const generateEstimateNumber = async (companyId) => {
        ORDER BY LENGTH(estimate_number) DESC, estimate_number DESC 
        LIMIT 1`
     );
-    
+
     let nextNum = 1;
     if (result.length > 0 && result[0].estimate_number) {
       // Extract number from EST#001 format
@@ -27,30 +27,30 @@ const generateEstimateNumber = async (companyId) => {
         }
       }
     }
-    
+
     // Ensure uniqueness by checking if the number already exists globally
     let estimateNumber = `EST#${String(nextNum).padStart(3, '0')}`;
     let attempts = 0;
     const maxAttempts = 100;
-    
+
     while (attempts < maxAttempts) {
       // Check globally since estimate_number has UNIQUE constraint
       const [existing] = await pool.execute(
         `SELECT id FROM estimates WHERE estimate_number = ?`,
         [estimateNumber]
       );
-      
+
       if (existing.length === 0) {
         // Number is unique, return it
         return estimateNumber;
       }
-      
+
       // Number exists, try next one
       nextNum++;
       estimateNumber = `EST#${String(nextNum).padStart(3, '0')}`;
       attempts++;
     }
-    
+
     // Fallback: use timestamp-based number if we can't find a unique sequential number
     const timestamp = Date.now().toString().slice(-6);
     return `EST#${timestamp}`;
@@ -66,49 +66,49 @@ const getAll = async (req, res) => {
   try {
     // Admin must provide company_id - required for filtering
     const filterCompanyId = req.query.company_id || req.body.company_id || req.companyId;
-    
+
     if (!filterCompanyId) {
       return res.status(400).json({
         success: false,
         error: 'company_id is required'
       });
     }
-    
+
     const status = req.query.status;
     const search = req.query.search || req.query.query;
     const clientId = req.query.client_id;
     const leadId = req.query.lead_id;
     const startDate = req.query.start_date;
     const endDate = req.query.end_date;
-    
+
     let whereClause = 'WHERE e.company_id = ? AND e.is_deleted = 0';
     const params = [filterCompanyId];
-    
+
     // Status filter
     if (status && status !== 'All' && status !== 'all') {
       whereClause += ' AND UPPER(e.status) = UPPER(?)';
       params.push(status);
     }
-    
+
     // Search filter (estimate number or client name)
     if (search) {
       whereClause += ' AND (e.estimate_number LIKE ? OR c.company_name LIKE ?)';
       const searchPattern = `%${search}%`;
       params.push(searchPattern, searchPattern);
     }
-    
+
     // Client filter - support both direct client_id and owner_id (user who owns the client)
     if (clientId) {
       whereClause += ' AND (e.client_id = ? OR c.owner_id = ?)';
       params.push(clientId, clientId);
     }
-    
+
     // Lead filter
     if (leadId) {
       whereClause += ' AND e.lead_id = ?';
       params.push(parseInt(leadId));
     }
-    
+
     // Date range filter
     if (startDate) {
       whereClause += ' AND DATE(e.created_at) >= ?';
@@ -118,7 +118,7 @@ const getAll = async (req, res) => {
       whereClause += ' AND DATE(e.created_at) <= ?';
       params.push(endDate);
     }
-    
+
     // No pagination needed - removed count query
 
     // Get all estimates without pagination - removed estimate_date column (doesn't exist)
@@ -185,15 +185,15 @@ const getAll = async (req, res) => {
     }
 
     // Return response without pagination
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       data: estimates
     });
   } catch (error) {
     console.error('Get estimates error:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message || 'Failed to fetch estimates' 
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to fetch estimates'
     });
   }
 };
@@ -232,7 +232,7 @@ const getById = async (req, res) => {
 
 const create = async (req, res) => {
   try {
-    const { 
+    const {
       valid_till, currency, client_id, project_id, lead_id,
       calculate_tax, description, note, terms,
       discount, discount_type, items = [], status
@@ -242,13 +242,34 @@ const create = async (req, res) => {
 
     const companyId = req.body.company_id || req.query.company_id || 1;
     const estimate_number = await generateEstimateNumber(companyId);
-    
+
     // Get created_by from various sources - body, query, req.userId, or default to 1 (admin)
     const effectiveCreatedBy = req.body.user_id || req.query.user_id || req.userId || 1;
-    
+
     // Calculate totals from items
-    const totals = calculateTotals(items, discount || 0, discount_type || '%');
-    
+    let totals;
+    if (items.length > 0) {
+      totals = calculateTotals(items, discount || 0, discount_type || '%');
+    } else {
+      // If no items, use provided totals or defaults
+      const providedTotal = parseFloat(req.body.total || req.body.amount || 0);
+      const providedSubTotal = parseFloat(req.body.sub_total || req.body.amount || 0);
+
+      let discountAmount = 0;
+      if (discount_type === '%') {
+        discountAmount = (providedSubTotal * parseFloat(discount || 0)) / 100;
+      } else {
+        discountAmount = parseFloat(discount || 0);
+      }
+
+      totals = {
+        sub_total: providedSubTotal,
+        discount_amount: discountAmount,
+        tax_amount: 0,
+        total: providedTotal || (providedSubTotal - discountAmount)
+      };
+    }
+
     // Insert estimate
     // Convert all undefined/empty values to null explicitly
     const [result] = await pool.execute(
@@ -288,18 +309,18 @@ const create = async (req, res) => {
         const quantity = parseFloat(item.quantity || 1);
         const unitPrice = parseFloat(item.unit_price || 0);
         const taxRate = parseFloat(item.tax_rate || 0);
-        
+
         // Calculate amount: (quantity * unit_price) + tax
         let amount = quantity * unitPrice;
         if (taxRate > 0) {
           amount += (amount * taxRate / 100);
         }
-        
+
         // Use provided amount if available, otherwise use calculated amount
-        const finalAmount = item.amount !== undefined && item.amount !== null 
-          ? parseFloat(item.amount) 
+        const finalAmount = item.amount !== undefined && item.amount !== null
+          ? parseFloat(item.amount)
           : amount;
-        
+
         return [
           estimateId,
           item.item_name,
@@ -336,10 +357,10 @@ const create = async (req, res) => {
     );
     estimates[0].items = estimateItems;
 
-    res.status(201).json({ 
-      success: true, 
-      data: estimates[0], 
-      message: 'Estimate created successfully' 
+    res.status(201).json({
+      success: true,
+      data: estimates[0],
+      message: 'Estimate created successfully'
     });
   } catch (error) {
     console.error('Create estimate error:', error);
@@ -399,18 +420,18 @@ const update = async (req, res) => {
           const quantity = parseFloat(item.quantity || 1);
           const unitPrice = parseFloat(item.unit_price || 0);
           const taxRate = parseFloat(item.tax_rate || 0);
-          
+
           // Calculate amount: (quantity * unit_price) + tax
           let amount = quantity * unitPrice;
           if (taxRate > 0) {
             amount += (amount * taxRate / 100);
           }
-          
+
           // Use provided amount if available, otherwise use calculated amount
-          const finalAmount = item.amount !== undefined && item.amount !== null 
-            ? parseFloat(item.amount) 
+          const finalAmount = item.amount !== undefined && item.amount !== null
+            ? parseFloat(item.amount)
             : amount;
-          
+
           return [
             id,
             item.item_name,
@@ -433,6 +454,23 @@ const update = async (req, res) => {
           [itemValues]
         );
       }
+    } else if (updateFields.amount !== undefined || updateFields.total !== undefined || updateFields.sub_total !== undefined) {
+      // If items are NOT updated but amount is updated directly
+      const providedTotal = parseFloat(updateFields.total || updateFields.amount || 0);
+      const providedSubTotal = parseFloat(updateFields.sub_total || updateFields.amount || 0);
+
+      let discountAmount = 0;
+      const discountVal = updateFields.discount !== undefined ? updateFields.discount : 0; // You might need to fetch existing discount if not provided, but for now assuming it comes with request or is 0 if simple update
+      const discountType = updateFields.discount_type || '%';
+
+      if (discountType === '%') {
+        discountAmount = (providedSubTotal * parseFloat(discountVal)) / 100;
+      } else {
+        discountAmount = parseFloat(discountVal);
+      }
+
+      updates.push('sub_total = ?', 'discount_amount = ?', 'total = ?');
+      values.push(providedSubTotal, discountAmount, providedTotal || (providedSubTotal - discountAmount));
     }
 
     if (updates.length > 0) {
@@ -476,14 +514,14 @@ const deleteEstimate = async (req, res) => {
       `UPDATE estimates SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
       [id]
     );
-    
+
     if (result.affectedRows === 0) {
       return res.status(404).json({
         success: false,
         error: 'Estimate not found'
       });
     }
-    
+
     res.json({ success: true, message: 'Estimate deleted successfully' });
   } catch (error) {
     console.error('Delete estimate error:', error);
@@ -506,11 +544,28 @@ const generateInvoiceNumber = async (companyId) => {
 /**
  * Calculate invoice totals
  */
+
 const calculateTotals = (items, discount, discountType) => {
   let subTotal = 0;
-  
+
   for (const item of items) {
-    subTotal += parseFloat(item.amount || 0);
+    // If amount is provided, use it. Otherwise calculate from quantity * unit_price
+    let itemAmount = parseFloat(item.amount || 0);
+
+    // If amount is 0 but we have valid quantity and unit price, calculate it
+    // This fixes issues where frontend sends amount as 0 or undefined
+    if (Math.abs(itemAmount) < 0.01) {
+      const quantity = parseFloat(item.quantity || 1);
+      const unitPrice = parseFloat(item.unit_price || 0);
+      const taxRate = parseFloat(item.tax_rate || 0);
+
+      itemAmount = quantity * unitPrice;
+      if (taxRate > 0) {
+        itemAmount += (itemAmount * taxRate / 100);
+      }
+    }
+
+    subTotal += itemAmount;
   }
 
   let discountAmount = 0;
@@ -531,6 +586,7 @@ const calculateTotals = (items, discount, discountType) => {
     unpaid: total
   };
 };
+
 
 /**
  * Convert estimate to invoice
@@ -596,7 +652,7 @@ const convertToInvoice = async (req, res) => {
       const quantity = parseFloat(item.quantity || 1);
       const unitPrice = parseFloat(item.unit_price || 0);
       const taxRate = parseFloat(item.tax_rate || 0);
-      
+
       // Calculate amount: (quantity * unit_price) + tax
       let amount = quantity * unitPrice;
       if (taxRate > 0) {
@@ -604,8 +660,8 @@ const convertToInvoice = async (req, res) => {
       }
 
       // Use provided amount if available, otherwise use calculated amount
-      const finalAmount = item.amount !== undefined && item.amount !== null 
-        ? parseFloat(item.amount) 
+      const finalAmount = item.amount !== undefined && item.amount !== null
+        ? parseFloat(item.amount)
         : amount;
 
       return {
@@ -628,24 +684,24 @@ const convertToInvoice = async (req, res) => {
     if (requestItems && requestItems.length > 0) {
       // Delete existing items
       await pool.execute(`DELETE FROM estimate_items WHERE estimate_id = ?`, [id]);
-      
+
       // Insert new items
       const itemValues = requestItems.map(item => {
         const quantity = parseFloat(item.quantity || 1);
         const unitPrice = parseFloat(item.unit_price || 0);
         const taxRate = parseFloat(item.tax_rate || 0);
-        
+
         // Calculate amount: (quantity * unit_price) + tax
         let amount = quantity * unitPrice;
         if (taxRate > 0) {
           amount += (amount * taxRate / 100);
         }
-        
+
         // Use provided amount if available, otherwise use calculated amount
-        const finalAmount = item.amount !== undefined && item.amount !== null 
-          ? parseFloat(item.amount) 
+        const finalAmount = item.amount !== undefined && item.amount !== null
+          ? parseFloat(item.amount)
           : amount;
-        
+
         return [
           id,
           item.item_name,
@@ -680,7 +736,7 @@ const convertToInvoice = async (req, res) => {
 
     // Get created_by from various sources - body, query, req.userId, or default to 1 (admin)
     const effectiveCreatedBy = req.body.user_id || req.query.user_id || req.userId || 1;
-    
+
     // Create invoice
     const [invoiceResult] = await pool.execute(
       `INSERT INTO invoices (
@@ -815,8 +871,8 @@ const sendEmail = async (req, res) => {
       [id]
     );
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: 'Estimate sent successfully',
       data: { email: recipientEmail }
     });

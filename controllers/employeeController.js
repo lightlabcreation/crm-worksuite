@@ -773,22 +773,22 @@ const getDashboardStats = async (req, res) => {
       [companyId, userId, userId]
     );
 
-    // Projects
+    // Projects - count projects where user has assigned tasks
     const projectsCount = await safeQuery(
-      `SELECT COUNT(DISTINCT p.id) as total FROM projects p
-       LEFT JOIN project_members pm ON p.id = pm.project_id
-       WHERE p.company_id = ? AND p.is_deleted = 0 
-       AND (p.project_manager_id = ? OR pm.user_id = ?)`,
-      [companyId, userId, userId]
+      `SELECT COUNT(DISTINCT t.project_id) as total FROM tasks t
+       LEFT JOIN task_assignees ta ON t.id = ta.task_id
+       WHERE ta.user_id = ? AND t.company_id = ? AND t.is_deleted = 0 AND t.project_id IS NOT NULL`,
+      [userId, companyId]
     );
 
     const activeProjects = await safeQuery(
-      `SELECT COUNT(DISTINCT p.id) as total FROM projects p
-       LEFT JOIN project_members pm ON p.id = pm.project_id
-       WHERE p.company_id = ? AND p.is_deleted = 0 
-       AND LOWER(p.status) = 'in progress'
-       AND (p.project_manager_id = ? OR pm.user_id = ?)`,
-      [companyId, userId, userId]
+      `SELECT COUNT(DISTINCT t.project_id) as total FROM tasks t
+       LEFT JOIN task_assignees ta ON t.id = ta.task_id
+       LEFT JOIN projects p ON t.project_id = p.id
+       WHERE ta.user_id = ? AND t.company_id = ? AND t.is_deleted = 0 
+       AND t.project_id IS NOT NULL AND p.is_deleted = 0 
+       AND LOWER(p.status) = 'in progress'`,
+      [userId, companyId]
     );
 
     // Time logs - using 'date' column as per timeTrackingController

@@ -1537,6 +1537,80 @@ const updateLeadLabels = async (req, res) => {
   }
 };
 
+/**
+ * Import leads from CSV/Excel data
+ * POST /api/v1/leads/import
+ */
+const importLeads = async (req, res) => {
+  try {
+    const { leads } = req.body;
+    const companyId = req.query.company_id || req.body.company_id || req.companyId;
+
+    if (!companyId) {
+      return res.status(400).json({ success: false, error: 'company_id is required' });
+    }
+
+    if (!leads || !Array.isArray(leads) || leads.length === 0) {
+      return res.status(400).json({ success: false, error: 'No leads data provided' });
+    }
+
+    const importedLeads = [];
+    const errors = [];
+
+    for (let i = 0; i < leads.length; i++) {
+      const lead = leads[i];
+      try {
+        // Generate lead number
+        const [countResult] = await pool.execute(
+          'SELECT COUNT(*) as count FROM leads WHERE company_id = ?',
+          [companyId]
+        );
+        const leadNumber = `LEAD-${String((countResult[0].count || 0) + importedLeads.length + 1).padStart(4, '0')}`;
+
+        const [result] = await pool.execute(
+          `INSERT INTO leads (
+            company_id, lead_number, lead_type, company_name, person_name,
+            email, phone, status, source, address, city, value, probability, notes
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            companyId,
+            leadNumber,
+            lead.lead_type || 'Organization',
+            lead.company_name || lead.companyName || null,
+            lead.person_name || lead.personName || lead.name || null,
+            lead.email || null,
+            lead.phone || null,
+            lead.status || 'New',
+            lead.source || null,
+            lead.address || null,
+            lead.city || null,
+            parseFloat(lead.value) || 0,
+            parseInt(lead.probability) || 0,
+            lead.notes || null
+          ]
+        );
+
+        importedLeads.push({ id: result.insertId, lead_number: leadNumber });
+      } catch (err) {
+        errors.push({ row: i + 1, error: err.message });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Successfully imported ${importedLeads.length} leads`,
+      data: {
+        imported: importedLeads.length,
+        failed: errors.length,
+        errors: errors
+      }
+    });
+  } catch (error) {
+    console.error('Import leads error:', error);
+    res.status(500).json({ success: false, error: 'Failed to import leads' });
+  }
+};
+
 module.exports = {
   getAll,
   getById,
@@ -1556,5 +1630,6 @@ module.exports = {
   createContact,
   updateContact,
   deleteContact,
+  importLeads,
 };
 

@@ -16,7 +16,7 @@ const generateProposalNumber = async (companyId) => {
        LIMIT 1`,
       [companyId]
     );
-    
+
     let nextNum = 1;
     if (result.length > 0 && result[0].estimate_number) {
       // Extract number from PROP#001 format
@@ -29,29 +29,29 @@ const generateProposalNumber = async (companyId) => {
         }
       }
     }
-    
+
     // Ensure uniqueness by checking if the number already exists (including deleted)
     let proposalNumber = `PROP#${String(nextNum).padStart(3, '0')}`;
     let attempts = 0;
     const maxAttempts = 100;
-    
+
     while (attempts < maxAttempts) {
       const [existing] = await pool.execute(
         `SELECT id FROM estimates WHERE estimate_number = ?`,
         [proposalNumber]
       );
-      
+
       if (existing.length === 0) {
         // Number is unique, return it
         return proposalNumber;
       }
-      
+
       // Number exists, try next one
       nextNum++;
       proposalNumber = `PROP#${String(nextNum).padStart(3, '0')}`;
       attempts++;
     }
-    
+
     // Fallback: use timestamp-based number if we can't find a unique sequential number
     const timestamp = Date.now().toString().slice(-6);
     return `PROP#${timestamp}`;
@@ -72,10 +72,10 @@ const calculateTotals = (items, discount, discountType) => {
       const quantity = parseFloat(item.quantity) || 0;
       const unitPrice = parseFloat(item.unit_price) || 0;
       const taxRate = parseFloat(item.tax_rate) || 0;
-      
+
       const itemSubtotal = quantity * unitPrice;
       const itemTax = itemSubtotal * (taxRate / 100);
-      
+
       subTotal += itemSubtotal;
       taxAmount += itemTax;
     });
@@ -105,14 +105,14 @@ const getAll = async (req, res) => {
     // Get filters from query params
     // Admin must provide company_id - required for filtering
     const filterCompanyId = req.query.company_id || req.body.company_id || req.companyId;
-    
+
     if (!filterCompanyId) {
       return res.status(400).json({
         success: false,
         error: 'company_id is required'
       });
     }
-    
+
     const status = req.query.status;
     const search = req.query.search;
     const client_id = req.query.client_id;
@@ -125,7 +125,7 @@ const getAll = async (req, res) => {
     const created_by = req.query.created_by;
     const sort_by = req.query.sort_by || 'created_at';
     const sort_order = req.query.sort_order || 'DESC';
-    
+
     // Filter proposals - include all estimates that are proposals
     let whereClause = `WHERE e.company_id = ? AND e.is_deleted = 0 AND (
       e.estimate_number LIKE 'PROP#%' 
@@ -133,59 +133,59 @@ const getAll = async (req, res) => {
       OR e.estimate_number LIKE 'PROP-%'
     )`;
     const params = [parseInt(filterCompanyId)];
-    
+
     if (status && status !== 'All' && status !== 'all') {
       const statusUpper = status.toUpperCase();
       whereClause += ' AND UPPER(e.status) = ?';
       params.push(statusUpper);
     }
-    
+
     if (client_id) {
       // Support both direct client_id and owner_id (user who owns the client)
       whereClause += ' AND (e.client_id = ? OR c.owner_id = ?)';
       params.push(client_id, client_id);
     }
-    
+
     if (project_id) {
       whereClause += ' AND e.project_id = ?';
       params.push(project_id);
     }
-    
+
     if (lead_id) {
       whereClause += ' AND e.lead_id = ?';
       params.push(parseInt(lead_id));
     }
-    
+
     if (start_date) {
       whereClause += ' AND DATE(e.created_at) >= ?';
       params.push(start_date);
     }
-    
+
     if (end_date) {
       whereClause += ' AND DATE(e.created_at) <= ?';
       params.push(end_date);
     }
-    
+
     if (amount_min !== undefined) {
       whereClause += ' AND e.total >= ?';
       params.push(parseFloat(amount_min));
     }
-    
+
     if (amount_max !== undefined && amount_max !== null && amount_max !== '') {
       whereClause += ' AND e.total <= ?';
       params.push(parseFloat(amount_max));
     }
-    
+
     if (created_by) {
       whereClause += ' AND e.created_by = ?';
       params.push(created_by);
     }
-    
+
     if (lead_id) {
       whereClause += ' AND e.lead_id = ?';
       params.push(parseInt(lead_id));
     }
-    
+
     // Search filter
     if (search) {
       whereClause += ` AND (
@@ -196,7 +196,7 @@ const getAll = async (req, res) => {
       const searchPattern = `%${search}%`;
       params.push(searchPattern, searchPattern, searchPattern);
     }
-    
+
     // Validate and set sort column
     const allowedSortColumns = {
       'id': 'e.id',
@@ -208,7 +208,7 @@ const getAll = async (req, res) => {
       'client_name': 'c.company_name',
       'company_name': 'comp.name'
     };
-    
+
     const sortColumn = allowedSortColumns[sort_by] || 'e.created_at';
     const sortDirection = (sort_order || 'DESC').toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
 
@@ -241,28 +241,28 @@ const getAll = async (req, res) => {
         [proposal.id]
       );
       proposal.items = items || [];
-      
+
       // Format estimate_number to match frontend expectations
       if (!proposal.estimate_number || !proposal.estimate_number.includes('PROPOSAL')) {
         const numMatch = proposal.estimate_number?.match(/PROP#?(\d+)/);
         const proposalNum = numMatch ? numMatch[1] : proposal.id;
         proposal.estimate_number = `PROPOSAL #${proposalNum}`;
       }
-      
+
       // Ensure status is lowercase for frontend
       if (proposal.status) {
         proposal.status = proposal.status.toLowerCase();
       }
     }
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       data: proposals
     });
   } catch (error) {
     console.error('Get proposals error:', error);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       error: error.message || 'Failed to fetch proposals'
     });
   }
@@ -302,7 +302,7 @@ const getById = async (req, res) => {
 
 const create = async (req, res) => {
   try {
-    const { 
+    const {
       valid_till, currency, client_id, project_id, lead_id,
       calculate_tax, description, note, terms,
       discount, discount_type, items = [], status, title
@@ -312,13 +312,34 @@ const create = async (req, res) => {
 
     const companyId = req.body.company_id || req.query.company_id || req.companyId || 1;
     const proposal_number = await generateProposalNumber(companyId);
-    
+
     // Get created_by from various sources - body, query, req.userId, or default to 1 (admin)
     const effectiveCreatedBy = req.body.user_id || req.query.user_id || req.userId || req.user?.id || 1;
-    
+
     // Calculate totals from items
-    const totals = calculateTotals(items, discount || 0, discount_type || '%');
-    
+    let totals;
+    if (items && items.length > 0) {
+      totals = calculateTotals(items, discount || 0, discount_type || '%');
+    } else {
+      // If no items, use provided totals or defaults
+      const providedTotal = parseFloat(req.body.total || req.body.amount || 0);
+      const providedSubTotal = parseFloat(req.body.sub_total || req.body.amount || 0);
+
+      let discountAmount = 0;
+      if (discount_type === '%') {
+        discountAmount = (providedSubTotal * parseFloat(discount || 0)) / 100;
+      } else {
+        discountAmount = parseFloat(discount || 0);
+      }
+
+      totals = {
+        sub_total: providedSubTotal,
+        discount_amount: discountAmount,
+        tax_amount: 0,
+        total: providedTotal || (providedSubTotal - discountAmount)
+      };
+    }
+
     // Map status: 'sent' -> 'Sent', 'draft' -> 'Draft', etc.
     let mappedStatus = 'Draft';
     if (status === 'sent') {
@@ -328,7 +349,7 @@ const create = async (req, res) => {
     } else if (status) {
       mappedStatus = status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
     }
-    
+
     // Insert proposal (using estimates table with PROP# prefix)
     // Convert all undefined/empty values to null explicitly
     const [result] = await pool.execute(
@@ -368,14 +389,14 @@ const create = async (req, res) => {
         const quantity = parseFloat(item.quantity) || 1;
         const unitPrice = parseFloat(item.unit_price) || 0;
         const taxRate = parseFloat(item.tax_rate) || 0;
-        
+
         // Calculate amount if not provided
         let amount = parseFloat(item.amount) || 0;
         if (!amount && (quantity > 0 || unitPrice > 0)) {
           const subtotal = quantity * unitPrice;
           amount = subtotal + (subtotal * taxRate / 100);
         }
-        
+
         return [
           proposalId,
           item.item_name || '',
@@ -419,9 +440,9 @@ const create = async (req, res) => {
     res.status(201).json({ success: true, data: proposal });
   } catch (error) {
     console.error('Create proposal error:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message || 'Failed to create proposal' 
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to create proposal'
     });
   }
 };
@@ -429,7 +450,7 @@ const create = async (req, res) => {
 const update = async (req, res) => {
   try {
     const { id } = req.params;
-    const { 
+    const {
       valid_till, currency, client_id, project_id,
       calculate_tax, description, note, terms,
       discount, discount_type, items = [], status
@@ -515,6 +536,25 @@ const update = async (req, res) => {
       updateFields.push('tax_amount = ?');
       updateFields.push('total = ?');
       updateValues.push(totals.sub_total, totals.discount_amount, totals.tax_amount, totals.total);
+    } else if (req.body.amount !== undefined || req.body.total !== undefined || req.body.sub_total !== undefined) {
+      // If items are NOT updated but amount is updated directly
+      const providedTotal = parseFloat(req.body.total || req.body.amount || 0);
+      const providedSubTotal = parseFloat(req.body.sub_total || req.body.amount || 0);
+
+      let discountAmount = 0;
+      const discountVal = req.body.discount !== undefined ? req.body.discount : 0;
+      const discountType = req.body.discount_type || '%';
+
+      if (discountType === '%') {
+        discountAmount = (providedSubTotal * parseFloat(discountVal)) / 100;
+      } else {
+        discountAmount = parseFloat(discountVal);
+      }
+
+      updateFields.push('sub_total = ?');
+      updateFields.push('discount_amount = ?');
+      updateFields.push('total = ?');
+      updateValues.push(providedSubTotal, discountAmount, providedTotal || (providedSubTotal - discountAmount));
     }
 
     updateFields.push('updated_at = CURRENT_TIMESTAMP');
@@ -535,14 +575,14 @@ const update = async (req, res) => {
         const quantity = parseFloat(item.quantity) || 1;
         const unitPrice = parseFloat(item.unit_price) || 0;
         const taxRate = parseFloat(item.tax_rate) || 0;
-        
+
         // Calculate amount if not provided
         let amount = parseFloat(item.amount) || 0;
         if (!amount && (quantity > 0 || unitPrice > 0)) {
           const subtotal = quantity * unitPrice;
           amount = subtotal + (subtotal * taxRate / 100);
         }
-        
+
         return [
           id,
           item.item_name || '',
@@ -586,9 +626,9 @@ const update = async (req, res) => {
     res.json({ success: true, data: proposal });
   } catch (error) {
     console.error('Update proposal error:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message || 'Failed to update proposal' 
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to update proposal'
     });
   }
 };
@@ -645,8 +685,8 @@ const convertToInvoice = async (req, res) => {
 
     // Create invoice from proposal (you'll need to implement invoice creation logic)
     // For now, just return success
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: 'Proposal converted to invoice successfully',
       data: { proposal, items }
     });
@@ -708,8 +748,8 @@ const sendEmail = async (req, res) => {
       [id]
     );
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: 'Proposal sent successfully',
       data: { email: recipientEmail }
     });
@@ -727,7 +767,7 @@ const getPDF = async (req, res) => {
   try {
     const { id } = req.params;
     const companyId = req.query.company_id || req.body.company_id || req.companyId;
-    
+
     if (!companyId) {
       return res.status(400).json({
         success: false,
@@ -786,14 +826,14 @@ const getPDF = async (req, res) => {
 const getFilters = async (req, res) => {
   try {
     const companyId = req.query.company_id || req.companyId;
-    
+
     let whereClause = `WHERE e.is_deleted = 0 AND (
       e.estimate_number LIKE 'PROP#%' 
       OR e.estimate_number LIKE 'PROPOSAL%'
       OR e.estimate_number LIKE 'PROP-%'
     )`;
     const params = [];
-    
+
     if (companyId) {
       whereClause += ' AND e.company_id = ?';
       params.push(companyId);
@@ -906,16 +946,16 @@ const updateStatus = async (req, res) => {
     );
     proposal.items = itemsData;
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       data: proposal,
       message: 'Proposal status updated successfully'
     });
   } catch (error) {
     console.error('Update proposal status error:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message || 'Failed to update proposal status' 
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to update proposal status'
     });
   }
 };
@@ -1022,16 +1062,16 @@ const duplicate = async (req, res) => {
     );
     newProposal.items = newItemsData;
 
-    res.status(201).json({ 
-      success: true, 
+    res.status(201).json({
+      success: true,
       data: newProposal,
       message: 'Proposal duplicated successfully'
     });
   } catch (error) {
     console.error('Duplicate proposal error:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message || 'Failed to duplicate proposal' 
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to duplicate proposal'
     });
   }
 };

@@ -9,58 +9,33 @@ const pool = require('../config/db');
  */
 const generateCreditNoteNumber = async (companyId) => {
   try {
-    // Check ALL credit notes (including deleted) to avoid UNIQUE constraint violations
+    // Use MAX to find the highest number across ALL credit notes (not just company)
     const [result] = await pool.execute(
-      `SELECT credit_note_number FROM credit_notes 
-       WHERE company_id = ? 
-       AND credit_note_number LIKE 'CN#%'
-       ORDER BY 
-         CAST(SUBSTRING(credit_note_number, 4) AS UNSIGNED) DESC,
-         credit_note_number DESC 
-       LIMIT 1`,
-      [companyId]
+      `SELECT MAX(CAST(SUBSTRING(credit_note_number, 4) AS UNSIGNED)) as max_num 
+       FROM credit_notes 
+       WHERE credit_note_number LIKE 'CN#%'`
     );
     
-    let nextNum = 1;
-    if (result.length > 0 && result[0].credit_note_number) {
-      const cnNum = result[0].credit_note_number;
-      const match = cnNum.match(/CN#(\d+)/);
-      if (match && match[1]) {
-        const existingNum = parseInt(match[1], 10);
-        if (!isNaN(existingNum) && existingNum >= 1) {
-          nextNum = existingNum + 1;
-        }
-      }
+    const nextNum = (result[0].max_num || 0) + 1;
+    const creditNoteNumber = `CN#${String(nextNum).padStart(3, '0')}`;
+    
+    // Double-check this number doesn't exist
+    const [existing] = await pool.execute(
+      `SELECT id FROM credit_notes WHERE credit_note_number = ?`,
+      [creditNoteNumber]
+    );
+    
+    if (existing.length > 0) {
+      // If exists, use timestamp-based unique number
+      const timestamp = Date.now().toString().slice(-6);
+      return `CN#${timestamp}`;
     }
     
-    // Generate unique number with retry logic
-    let creditNoteNumber = `CN#${String(nextNum).padStart(3, '0')}`;
-    let attempts = 0;
-    const maxAttempts = 1000; // Increased attempts
-    
-    while (attempts < maxAttempts) {
-      // Check if this number exists (including deleted records due to UNIQUE constraint)
-      const [existing] = await pool.execute(
-        `SELECT id FROM credit_notes WHERE company_id = ? AND credit_note_number = ?`,
-        [companyId, creditNoteNumber]
-      );
-      
-      if (existing.length === 0) {
-        return creditNoteNumber;
-      }
-      
-      nextNum++;
-      creditNoteNumber = `CN#${String(nextNum).padStart(3, '0')}`;
-      attempts++;
-    }
-    
-    // Fallback: Use timestamp to ensure uniqueness
-    const timestamp = Date.now().toString().slice(-8);
-    return `CN#${timestamp}`;
+    return creditNoteNumber;
   } catch (error) {
     console.error('Error generating credit note number:', error);
     // Fallback: Use timestamp to ensure uniqueness
-    const timestamp = Date.now().toString().slice(-8);
+    const timestamp = Date.now().toString().slice(-6);
     return `CN#${timestamp}`;
   }
 };
@@ -263,12 +238,13 @@ const create = async (req, res) => {
 const update = async (req, res) => {
   try {
     const { id } = req.params;
-    const { amount, date, reason, status } = req.body;
+    const { client_id, invoice_id, amount, date, reason, status } = req.body;
+    const companyId = req.query.company_id || req.body.company_id || req.companyId || 1;
 
     // Check if credit note exists
     const [creditNotes] = await pool.execute(
       `SELECT * FROM credit_notes WHERE id = ? AND company_id = ? AND is_deleted = 0`,
-      [id, req.companyId]
+      [id, companyId]
     );
 
     if (creditNotes.length === 0) {
