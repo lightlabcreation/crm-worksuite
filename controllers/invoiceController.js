@@ -392,7 +392,8 @@ const create = async (req, res) => {
       note ?? null,
       terms || 'Thank you for your business.',
       discount ?? 0,
-      discount_type || '%',
+      // Map discount_type to valid ENUM values: '%' or 'fixed'
+      (discount_type === 'fixed' || discount_type === 'Fixed' || discount_type === 'amount') ? 'fixed' : '%',
       totals.sub_total ?? 0,
       totals.discount_amount ?? 0,
       totals.tax_amount ?? 0,

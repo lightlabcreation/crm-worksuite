@@ -298,7 +298,27 @@ const create = async (req, res) => {
     const safeDueDate = deadline ?? (due_date ?? null);
     const safePriority = priority || 'Medium';
     const safeEstimatedTime = estimated_time ?? null;
-    const safeStatus = status || "To do";
+    // Map status to valid ENUM values: 'Incomplete', 'Doing', 'Done'
+    const statusMap = {
+      'To do': 'Incomplete',
+      'to do': 'Incomplete',
+      'todo': 'Incomplete',
+      'pending': 'Incomplete',
+      'Pending': 'Incomplete',
+      'incomplete': 'Incomplete',
+      'Incomplete': 'Incomplete',
+      'In Progress': 'Doing',
+      'in progress': 'Doing',
+      'doing': 'Doing',
+      'Doing': 'Doing',
+      'working': 'Doing',
+      'Done': 'Done',
+      'done': 'Done',
+      'completed': 'Done',
+      'Completed': 'Done',
+      'complete': 'Done'
+    };
+    const safeStatus = statusMap[status] || 'Incomplete';
     const safeIsRecurring = is_recurring ? 1 : 0;
     const safeRecurringFrequency = recurring_frequency ?? null;
 
@@ -349,7 +369,7 @@ const create = async (req, res) => {
         safeLeadId ?? null,
         safeStartDate ?? null,
         safeDeadline ?? null,
-        safeStatus || 'To do',
+        safeStatus,
         safePriority || 'Medium',
         safeEstimatedTime ?? null,
         req.userId || req.body.user_id || 1
@@ -519,6 +539,27 @@ const update = async (req, res) => {
     const updates = [];
     const values = [];
 
+    // Status mapping for valid ENUM values
+    const statusMap = {
+      'To do': 'Incomplete',
+      'to do': 'Incomplete',
+      'todo': 'Incomplete',
+      'pending': 'Incomplete',
+      'Pending': 'Incomplete',
+      'incomplete': 'Incomplete',
+      'Incomplete': 'Incomplete',
+      'In Progress': 'Doing',
+      'in progress': 'Doing',
+      'doing': 'Doing',
+      'Doing': 'Doing',
+      'working': 'Doing',
+      'Done': 'Done',
+      'done': 'Done',
+      'completed': 'Done',
+      'Completed': 'Done',
+      'complete': 'Done'
+    };
+
     for (const field of allowedFields) {
       if (updateFields.hasOwnProperty(field)) {
         let value = updateFields[field];
@@ -529,6 +570,10 @@ const update = async (req, res) => {
         // Convert string 'NaN' to null
         if (value === 'NaN' || value === 'null' || value === 'undefined') {
           value = null;
+        }
+        // Map status to valid ENUM values
+        if (field === 'status' && value) {
+          value = statusMap[value] || value;
         }
         updates.push(`${field} = ?`);
         values.push(value);

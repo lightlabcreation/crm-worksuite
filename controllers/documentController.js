@@ -218,13 +218,44 @@ const deleteDocument = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const companyId = req.query.company_id || req.body.company_id || req.companyId || 1;
+    const companyId = req.query.company_id || req.body.company_id || req.companyId || null;
     const userId = req.query.user_id || req.body.user_id || req.userId || null;
     const userRole = req.query.role || req.body.role || req.user?.role || null;
 
-    // Get document first to check permissions and file path
-    let whereClause = 'WHERE d.id = ? AND d.company_id = ? AND d.is_deleted = 0';
-    const params = [id, companyId];
+    console.log('Delete document request:', { id, companyId, userId, userRole });
+
+    // First check if document exists at all
+    const [existCheck] = await pool.execute(
+      'SELECT id, company_id, user_id, is_deleted FROM documents WHERE id = ?',
+      [id]
+    );
+
+    if (existCheck.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Document not found'
+      });
+    }
+
+    const docInfo = existCheck[0];
+
+    // Check if already deleted
+    if (docInfo.is_deleted === 1) {
+      return res.status(404).json({
+        success: false,
+        error: 'Document already deleted'
+      });
+    }
+
+    // Get document with permissions check
+    let whereClause = 'WHERE d.id = ? AND d.is_deleted = 0';
+    const params = [id];
+
+    // Only filter by company_id if provided
+    if (companyId) {
+      whereClause += ' AND d.company_id = ?';
+      params.push(companyId);
+    }
 
     // For employees/clients, only allow deletion of their own documents
     if ((userRole === 'EMPLOYEE' || userRole === 'CLIENT') && userId) {
@@ -238,9 +269,9 @@ const deleteDocument = async (req, res) => {
     );
 
     if (documents.length === 0) {
-      return res.status(404).json({
+      return res.status(403).json({
         success: false,
-        error: 'Document not found'
+        error: 'You do not have permission to delete this document'
       });
     }
 

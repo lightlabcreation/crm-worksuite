@@ -7,6 +7,7 @@ router.get('/', subscriptionController.getAll);
 router.post('/', subscriptionController.create);
 router.put('/:id/cancel', subscriptionController.cancel);
 router.put('/:id', subscriptionController.update);
+router.delete('/:id', subscriptionController.delete);
 
 module.exports = router;
 

@@ -291,13 +291,15 @@ const create = async (req, res) => {
         (note && note !== '') ? note : null,
         (terms && terms !== '') ? terms : 'Thank you for your business.',
         (discount !== undefined && discount !== null && discount !== '') ? parseFloat(discount) : 0,
-        (discount_type && discount_type !== '') ? discount_type : '%',
+        // Map discount_type to valid ENUM values: '%' or 'fixed'
+        (discount_type === 'fixed' || discount_type === 'Fixed' || discount_type === 'amount') ? 'fixed' : '%',
         totals.sub_total || 0,
         totals.discount_amount || 0,
         totals.tax_amount || 0,
         totals.total || 0,
         effectiveCreatedBy || 1,
-        (status && status !== '') ? status : 'draft'
+        // Map status to valid ENUM values: 'Waiting', 'Accepted', 'Declined', 'Expired', 'Draft'
+        (status === 'draft' || status === 'Draft' || !status) ? 'Draft' : status
       ]
     );
 

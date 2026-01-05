@@ -18,7 +18,7 @@ const settingsSchema = {
   time_format: { type: 'enum', required: false, values: ['H:i', 'h:i A'] },
   fiscal_year_start: { type: 'string', required: false },
   session_timeout: { type: 'number', required: false, min: 5, max: 480 },
-  max_file_size: { type: 'number', required: false, min: 1, max: 100 },
+  max_file_size: { type: 'number', required: false, min: 1, max: 1024 },
   allowed_file_types: { type: 'string', required: false },
 
   // Localization

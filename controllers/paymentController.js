@@ -113,7 +113,13 @@ const create = async (req, res) => {
       bank_account, receipt_path, remark, note, order_number, client_id
     } = req.body;
 
-    // Removed required validations - allow empty data
+    // Validate invoice_id is required (database constraint)
+    if (!invoice_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'invoice_id is required for recording a payment'
+      });
+    }
 
     // Handle payment_method - map to payment_gateway or offline_payment_method
     const effectivePaymentGateway = payment_gateway || (payment_method && !['Cash', 'Cheque', 'Bank Transfer'].includes(payment_method) ? payment_method : null);

@@ -317,5 +317,46 @@ const cancel = async (req, res) => {
   }
 };
 
-module.exports = { getAll, create, update, cancel };
+/**
+ * Delete subscription (soft delete)
+ * DELETE /api/v1/subscriptions/:id
+ */
+const deleteSubscription = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const companyId = req.query.company_id || req.body.company_id || req.companyId || 1;
+
+    // Check if subscription exists
+    const [subscriptions] = await pool.execute(
+      `SELECT * FROM subscriptions WHERE id = ? AND company_id = ? AND is_deleted = 0`,
+      [id, companyId]
+    );
+
+    if (subscriptions.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Subscription not found'
+      });
+    }
+
+    // Soft delete
+    await pool.execute(
+      `UPDATE subscriptions SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      [id]
+    );
+
+    res.json({
+      success: true,
+      message: 'Subscription deleted successfully'
+    });
+  } catch (error) {
+    console.error('Delete subscription error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to delete subscription'
+    });
+  }
+};
+
+module.exports = { getAll, create, update, cancel, delete: deleteSubscription };
 
