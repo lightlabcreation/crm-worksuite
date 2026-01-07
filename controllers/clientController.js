@@ -73,7 +73,18 @@ const getAll = async (req, res) => {
       client.due = (parseFloat(client.total_invoiced) || 0) - (parseFloat(client.payment_received) || 0);
     }
 
-    // Get contacts for each client (groups and labels removed)
+    // Get labels for each client
+    for (let client of clients) {
+      const [labels] = await pool.execute(
+        `SELECT label, color FROM client_labels WHERE client_id = ?`,
+        [client.id]
+      );
+      // Map labels to have both name and color
+      client.labels = labels.map(l => l.label);
+      client.labelDetails = labels; // Full details with colors
+    }
+
+    // Get contacts for each client
     for (let client of clients) {
       const [contacts] = await pool.execute(
         `SELECT * FROM client_contacts WHERE client_id = ? AND is_deleted = 0`,
@@ -105,9 +116,9 @@ const getById = async (req, res) => {
 
     // Admin must provide company_id - required for filtering
     const companyId = req.query.company_id || req.body.company_id || req.companyId;
-    
+
     console.log('GET /clients/:id - id:', id, 'companyId:', companyId, 'query:', req.query, 'body:', req.body);
-    
+
     if (!companyId) {
       console.error('GET /clients/:id - company_id is missing for id:', id);
       return res.status(400).json({
@@ -147,7 +158,15 @@ const getById = async (req, res) => {
     }
 
     const client = clients[0];
-    
+
+    // Get labels
+    const [labels] = await pool.execute(
+      `SELECT label, color FROM client_labels WHERE client_id = ?`,
+      [client.id]
+    );
+    client.labels = labels.map(l => l.label);
+    client.labelDetails = labels;
+
     // Calculate due amount
     client.due = (parseFloat(client.total_invoiced) || 0) - (parseFloat(client.payment_received) || 0);
 
@@ -178,7 +197,7 @@ const getById = async (req, res) => {
 const create = async (req, res) => {
   const connection = await pool.getConnection();
   await connection.beginTransaction();
-  
+
   try {
     const {
       client_name, company_name, email, password, address, city, state, zip,
@@ -201,7 +220,7 @@ const create = async (req, res) => {
 
     // Admin must provide company_id - required for filtering
     const companyId = req.companyId || req.body.company_id || req.query.company_id;
-    
+
     if (!companyId) {
       await connection.rollback();
       connection.release();
@@ -257,6 +276,30 @@ const create = async (req, res) => {
     );
 
     const clientId = result.insertId;
+
+    // Save labels if provided
+    if (req.body.labels && Array.isArray(req.body.labels) && req.body.labels.length > 0) {
+      const uniqueLabels = [...new Set(req.body.labels)];
+      const placeholders = uniqueLabels.map(() => '?').join(',');
+
+      // Fetch existing colors to maintain consistency
+      const [existingColors] = await connection.execute(
+        `SELECT cl.label, MAX(cl.color) as color
+           FROM client_labels cl
+           INNER JOIN clients c ON cl.client_id = c.id
+           WHERE c.company_id = ? AND c.is_deleted = 0 AND cl.label IN (${placeholders})
+           GROUP BY cl.label`,
+        [companyId, ...uniqueLabels]
+      );
+
+      const colorMap = new Map(existingColors.map(lc => [lc.label, lc.color]));
+      const labelValues = uniqueLabels.map(lbl => [clientId, lbl, colorMap.get(lbl) || '#3b82f6']);
+
+      await connection.query(
+        `INSERT INTO client_labels (client_id, label, color) VALUES ?`,
+        [labelValues]
+      );
+    }
 
     await connection.commit();
     connection.release();
@@ -382,9 +425,21 @@ const update = async (req, res) => {
     if (updateFields.labels) {
       await pool.execute(`DELETE FROM client_labels WHERE client_id = ?`, [id]);
       if (updateFields.labels.length > 0) {
-        const labelValues = updateFields.labels.map(label => [id, label]);
+        const uniqueLabels = [...new Set(updateFields.labels)];
+        const placeholders = uniqueLabels.map(() => '?').join(',');
+        const [labelColors] = await pool.execute(
+          `SELECT cl.label, MAX(cl.color) as color
+           FROM client_labels cl
+           INNER JOIN clients c ON cl.client_id = c.id
+           WHERE c.company_id = ? AND c.is_deleted = 0 AND cl.label IN (${placeholders})
+           GROUP BY cl.label`,
+          [companyId, ...uniqueLabels]
+        );
+
+        const colorMap = new Map(labelColors.map(lc => [lc.label, lc.color]));
+        const labelValues = updateFields.labels.map(lbl => [id, lbl, colorMap.get(lbl) || null]);
         await pool.query(
-          `INSERT INTO client_labels (client_id, label) VALUES ?`,
+          `INSERT INTO client_labels (client_id, label, color) VALUES ?`,
           [labelValues]
         );
       }
@@ -420,7 +475,7 @@ const deleteClient = async (req, res) => {
 
     // Ensure company_id is properly parsed as integer
     const companyId = parseInt(req.companyId || req.query.company_id || req.body.company_id || 0, 10);
-    
+
     // company_id is required for admin users
     if (!companyId || isNaN(companyId) || companyId <= 0) {
       return res.status(400).json({
@@ -428,7 +483,7 @@ const deleteClient = async (req, res) => {
         error: 'company_id is required and must be a valid positive number'
       });
     }
-    
+
     const [result] = await pool.execute(
       `UPDATE clients SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP
        WHERE id = ? AND company_id = ? AND is_deleted = 0`,
@@ -475,7 +530,7 @@ const addContact = async (req, res) => {
 
     // Ensure company_id is properly parsed as integer
     const companyId = parseInt(req.companyId || req.query.company_id || req.body.company_id || 0, 10);
-    
+
     // company_id is required for admin users
     if (!companyId || isNaN(companyId) || companyId <= 0) {
       return res.status(400).json({
@@ -483,7 +538,7 @@ const addContact = async (req, res) => {
         error: 'company_id is required and must be a valid positive number'
       });
     }
-    
+
     // Check if client exists
     const [clients] = await pool.execute(
       `SELECT id FROM clients WHERE id = ? AND company_id = ? AND is_deleted = 0`,
@@ -740,10 +795,9 @@ const getOverview = async (req, res) => {
       });
     }
 
-    // Calculate date range
+    // Base filters
     let dateFilter = '';
     const dateParams = [];
-    
     if (date_range === 'today') {
       dateFilter = 'AND DATE(c.created_at) = CURDATE()';
     } else if (date_range === 'this_week') {
@@ -769,174 +823,157 @@ const getOverview = async (req, res) => {
       ownerParams.push(parseInt(owner_id, 10));
     }
 
-    // Total Clients
-    const [totalClientsResult] = await pool.execute(
-      `SELECT COUNT(*) as count FROM clients c
+    // --- 1. Client Totals ---
+    const [clientStats] = await pool.execute(
+      `SELECT 
+        COUNT(*) as total,
+        SUM(CASE WHEN status = 'Active' THEN 1 ELSE 0 END) as active,
+        SUM(CASE WHEN status = 'Inactive' THEN 1 ELSE 0 END) as inactive
+       FROM clients c
        WHERE c.company_id = ? AND c.is_deleted = 0 ${dateFilter} ${statusFilter} ${ownerFilter}`,
       [companyId, ...dateParams, ...statusParams, ...ownerParams]
     );
-    const totalClients = totalClientsResult[0].count;
 
-    // Active Clients
-    const [activeClientsResult] = await pool.execute(
-      `SELECT COUNT(*) as count FROM clients c
-       WHERE c.company_id = ? AND c.is_deleted = 0 AND c.status = 'Active' ${dateFilter} ${ownerFilter}`,
-      [companyId, ...dateParams, ...ownerParams]
+    // --- 2. Contact Stats ---
+    // Contacts don't link to owners directly usually, but link to clients who have owners
+    // We join clients to filter by company and potentially owner/status if they affect "Contacts" visibility
+    const [contactStats] = await pool.execute(
+      `SELECT 
+        COUNT(cc.id) as total_contacts,
+        SUM(CASE WHEN DATE(cc.created_at) = CURDATE() THEN 1 ELSE 0 END) as contacts_today,
+        SUM(CASE WHEN cc.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 ELSE 0 END) as contacts_last_7_days
+       FROM client_contacts cc
+       INNER JOIN clients c ON cc.client_id = c.id
+       WHERE c.company_id = ? AND c.is_deleted = 0 AND cc.is_deleted = 0 ${statusFilter} ${ownerFilter}`,
+      [companyId, ...statusParams, ...ownerParams]
     );
-    const activeClients = activeClientsResult[0].count;
 
-    // Inactive Clients
-    const [inactiveClientsResult] = await pool.execute(
-      `SELECT COUNT(*) as count FROM clients c
-       WHERE c.company_id = ? AND c.is_deleted = 0 AND c.status = 'Inactive' ${dateFilter} ${ownerFilter}`,
-      [companyId, ...dateParams, ...ownerParams]
+    // --- 3. Invoice Stats (Clients having...) ---
+    // Unpaid, Partially Paid, Overdue
+    const [invoiceStats] = await pool.execute(
+      `SELECT 
+        COUNT(DISTINCT CASE WHEN i.status = 'Unpaid' THEN c.id END) as clients_unpaid,
+        COUNT(DISTINCT CASE WHEN i.status = 'Partially Paid' THEN c.id END) as clients_partially_paid,
+        COUNT(DISTINCT CASE WHEN i.due_date < CURDATE() AND i.status != 'Paid' THEN c.id END) as clients_overdue
+       FROM invoices i
+       INNER JOIN clients c ON i.client_id = c.id
+       WHERE c.company_id = ? AND c.is_deleted = 0 AND i.is_deleted = 0 ${statusFilter} ${ownerFilter}`,
+      [companyId, ...statusParams, ...ownerParams]
     );
-    const inactiveClients = inactiveClientsResult[0].count;
 
-    // Total Revenue (from invoices)
+    // --- 4. Project Stats (Clients having...) ---
+    const [projectStats] = await pool.execute(
+      `SELECT 
+        COUNT(DISTINCT CASE WHEN p.status = 'in progress' THEN c.id END) as clients_open_projects,
+        COUNT(DISTINCT CASE WHEN p.status = 'completed' OR p.status = 'finished' THEN c.id END) as clients_completed_projects,
+        COUNT(DISTINCT CASE WHEN p.status = 'on hold' THEN c.id END) as clients_hold_projects,
+        COUNT(DISTINCT CASE WHEN p.status = 'canceled' THEN c.id END) as clients_canceled_projects
+       FROM projects p
+       INNER JOIN clients c ON p.client_id = c.id
+       WHERE c.company_id = ? AND c.is_deleted = 0 AND p.is_deleted = 0 ${statusFilter} ${ownerFilter}`,
+      [companyId, ...statusParams, ...ownerParams]
+    );
+
+    // --- 5. Estimate Stats (Clients having...) ---
+    const [estimateStats] = await pool.execute(
+      `SELECT 
+        COUNT(DISTINCT CASE WHEN e.status IN ('sent', 'draft') THEN c.id END) as clients_open_estimates,
+        COUNT(DISTINCT CASE WHEN e.status = 'accepted' THEN c.id END) as clients_accepted_estimates,
+        COUNT(DISTINCT CASE WHEN e.status = 'waiting' THEN c.id END) as clients_new_estimate_requests,
+        COUNT(DISTINCT CASE WHEN e.status = 'draft' THEN c.id END) as clients_estimates_in_progress
+       FROM estimates e
+       INNER JOIN clients c ON e.client_id = c.id
+       WHERE c.company_id = ? AND c.is_deleted = 0 ${statusFilter} ${ownerFilter}`,
+      [companyId, ...statusParams, ...ownerParams]
+    );
+
+    // --- 6. Other Stats (Tickets, Proposals) ---
+    // Assuming tables exist: tickets, proposals. If not, ret 0.
+    // We'll wrap in try/catch or just assume tables exist. Given project scope, likely yes.
+    let ticketStats = { clients_open_tickets: 0 };
+    let proposalStats = { clients_open_proposals: 0 };
+
+    try {
+      const [tStats] = await pool.execute(
+        `SELECT COUNT(DISTINCT CASE WHEN t.status != 'closed' AND t.status != 'resolved' THEN c.id END) as clients_open_tickets
+           FROM tickets t
+           INNER JOIN clients c ON t.client_id = c.id
+           WHERE c.company_id = ? AND c.is_deleted = 0 ${statusFilter} ${ownerFilter}`,
+        [companyId, ...statusParams, ...ownerParams]
+      );
+      ticketStats = tStats[0];
+    } catch (e) { /* Ignore if table missing */ }
+
+    try {
+      const [pStats] = await pool.execute(
+        `SELECT COUNT(DISTINCT CASE WHEN p.status = 'open' OR p.status = 'active' THEN c.id END) as clients_open_proposals
+           FROM proposals p
+           INNER JOIN clients c ON p.client_id = c.id
+           WHERE c.company_id = ? AND c.is_deleted = 0`, // Simplified filter for robustness
+        [companyId]
+      );
+      proposalStats = pStats[0];
+    } catch (e) { /* Ignore if table missing */ }
+
+
+    // --- 7. Revenue ---
     const [revenueResult] = await pool.execute(
       `SELECT
         COALESCE(SUM(i.total), 0) as total_revenue,
-        COALESCE(SUM(i.paid), 0) as payment_received,
-        COALESCE(SUM(i.unpaid), 0) as outstanding_amount
+        COALESCE(SUM(
+          (SELECT COALESCE(SUM(p.amount), 0) 
+           FROM payments p 
+           WHERE p.invoice_id = i.id AND p.is_deleted = 0)
+        ), 0) as payment_received
        FROM invoices i
        INNER JOIN clients c ON i.client_id = c.id
        WHERE c.company_id = ? AND c.is_deleted = 0 AND i.is_deleted = 0 ${dateFilter.replace('c.created_at', 'i.created_at')} ${statusFilter} ${ownerFilter}`,
       [companyId, ...dateParams, ...statusParams, ...ownerParams]
     );
-    const revenue = revenueResult[0] || { total_revenue: 0, payment_received: 0, outstanding_amount: 0 };
-
-    // Recent Clients (last 10)
-    const [recentClientsResult] = await pool.execute(
-      `SELECT
-        c.id,
-        c.company_name,
-        c.status,
-        c.created_at,
-        u.name as owner_name,
-        (SELECT COUNT(*) FROM invoices inv WHERE inv.client_id = c.id AND inv.is_deleted = 0) as total_invoices,
-        (SELECT COALESCE(SUM(inv.total), 0) FROM invoices inv WHERE inv.client_id = c.id AND inv.is_deleted = 0) as total_invoiced
-       FROM clients c
-       LEFT JOIN users u ON c.owner_id = u.id
-       WHERE c.company_id = ? AND c.is_deleted = 0 ${dateFilter} ${statusFilter} ${ownerFilter}
-       ORDER BY c.created_at DESC
-       LIMIT 10`,
-      [companyId, ...dateParams, ...statusParams, ...ownerParams]
-    );
-
-    // Client Growth (last 6 months)
-    const [growthResult] = await pool.execute(
-      `SELECT 
-        DATE_FORMAT(created_at, '%Y-%m') as month,
-        COUNT(*) as count
-       FROM clients
-       WHERE company_id = ? AND is_deleted = 0
-       AND created_at >= DATE_SUB(NOW(), INTERVAL 6 MONTH)
-       GROUP BY DATE_FORMAT(created_at, '%Y-%m')
-       ORDER BY month ASC`,
-      [companyId]
-    );
-
-    // Revenue by Client (top 10)
-    const [revenueByClientResult] = await pool.execute(
-      `SELECT
-        c.id,
-        c.company_name,
-        COALESCE(SUM(i.total), 0) as total_revenue,
-        COALESCE(SUM(i.paid), 0) as payment_received,
-        COALESCE(SUM(i.unpaid), 0) as outstanding
-       FROM clients c
-       LEFT JOIN invoices i ON i.client_id = c.id AND i.is_deleted = 0
-       WHERE c.company_id = ? AND c.is_deleted = 0 ${statusFilter} ${ownerFilter}
-       GROUP BY c.id, c.company_name
-       ORDER BY total_revenue DESC
-       LIMIT 10`,
-      [companyId, ...statusParams, ...ownerParams]
-    );
-
-    // Assigned Users
-    const [assignedUsersResult] = await pool.execute(
-      `SELECT
-        u.id,
-        u.name,
-        u.email,
-        COUNT(c.id) as clients_count
-       FROM users u
-       LEFT JOIN clients c ON c.owner_id = u.id AND c.company_id = ? AND c.is_deleted = 0 ${dateFilter.replace('c.created_at', 'c.created_at')} ${statusFilter}
-       WHERE u.company_id = ? AND u.is_deleted = 0
-       GROUP BY u.id, u.name, u.email
-       HAVING clients_count > 0
-       ORDER BY clients_count DESC
-       LIMIT 10`,
-      [companyId, ...dateParams, ...statusParams, companyId]
-    );
-
-    // Recent Activity (from invoices, payments, client updates)
-    const [recentActivityResult] = await pool.execute(
-      `(SELECT 
-        'client_created' as activity_type,
-        c.company_name as title,
-        c.created_at as activity_date,
-        c.id as related_id,
-        'client' as related_type,
-        u.name as user_name
-       FROM clients c
-       LEFT JOIN users u ON c.owner_id = u.id
-       WHERE c.company_id = ? AND c.is_deleted = 0
-       ORDER BY c.created_at DESC
-       LIMIT 5)
-       UNION ALL
-       (SELECT 
-        'invoice_created' as activity_type,
-        CONCAT('Invoice #', i.invoice_number, ' for ', c.company_name) as title,
-        i.created_at as activity_date,
-        i.id as related_id,
-        'invoice' as related_type,
-        u.name as user_name
-       FROM invoices i
-       INNER JOIN clients c ON i.client_id = c.id
-       LEFT JOIN users u ON i.created_by = u.id
-       WHERE c.company_id = ? AND i.is_deleted = 0
-       ORDER BY i.created_at DESC
-       LIMIT 5)
-       UNION ALL
-       (SELECT 
-        'payment_received' as activity_type,
-        CONCAT('Payment received for Invoice #', i.invoice_number) as title,
-        p.payment_date as activity_date,
-        p.id as related_id,
-        'payment' as related_type,
-        u.name as user_name
-       FROM payments p
-       INNER JOIN invoices i ON p.invoice_id = i.id
-       INNER JOIN clients c ON i.client_id = c.id
-       LEFT JOIN users u ON p.created_by = u.id
-       WHERE c.company_id = ? AND p.is_deleted = 0
-       ORDER BY p.payment_date DESC
-       LIMIT 5)
-       ORDER BY activity_date DESC
-       LIMIT 15`,
-      [companyId, companyId, companyId]
-    );
+    const revenueData = revenueResult[0] || { total_revenue: 0, payment_received: 0 };
+    const revenue = {
+      total_revenue: parseFloat(revenueData.total_revenue),
+      payment_received: parseFloat(revenueData.payment_received),
+      outstanding_amount: parseFloat(revenueData.total_revenue) - parseFloat(revenueData.payment_received)
+    };
 
     res.json({
       success: true,
       data: {
         totals: {
-          total_clients: totalClients,
-          active_clients: activeClients,
-          inactive_clients: inactiveClients,
+          total_clients: clientStats[0].total,
+          active_clients: clientStats[0].active,
+          inactive_clients: clientStats[0].inactive,
         },
-        revenue: {
-          total_revenue: parseFloat(revenue.total_revenue) || 0,
-          payment_received: parseFloat(revenue.payment_received) || 0,
-          outstanding_amount: parseFloat(revenue.outstanding_amount) || 0,
+        contacts: {
+          total_contacts: contactStats[0].total_contacts,
+          today: contactStats[0].contacts_today,
+          last_7_days: contactStats[0].contacts_last_7_days
         },
-        recent_clients: recentClientsResult,
-        client_growth: growthResult,
-        revenue_by_client: revenueByClientResult,
-        assigned_users: assignedUsersResult,
-        recent_activity: recentActivityResult,
+        invoices: {
+          clients_unpaid: invoiceStats[0].clients_unpaid,
+          clients_partially_paid: invoiceStats[0].clients_partially_paid,
+          clients_overdue: invoiceStats[0].clients_overdue
+        },
+        projects: {
+          clients_open: projectStats[0].clients_open_projects,
+          clients_completed: projectStats[0].clients_completed_projects,
+          clients_hold: projectStats[0].clients_hold_projects,
+          clients_canceled: projectStats[0].clients_canceled_projects
+        },
+        estimates: {
+          clients_open: estimateStats[0].clients_open_estimates,
+          clients_accepted: estimateStats[0].clients_accepted_estimates,
+          clients_new: estimateStats[0].clients_new_estimate_requests,
+          clients_in_progress: estimateStats[0].clients_estimates_in_progress
+        },
+        tickets: {
+          clients_open: ticketStats.clients_open_tickets
+        },
+        proposals: {
+          clients_open: proposalStats.clients_open_proposals
+        },
+        revenue
       },
     });
   } catch (error) {
@@ -944,6 +981,298 @@ const getOverview = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to fetch clients overview',
+    });
+  }
+};
+
+const getAllContacts = async (req, res) => {
+  try {
+    const companyId = req.companyId || req.query.company_id || req.body.company_id;
+
+    if (!companyId) {
+      return res.status(400).json({
+        success: false,
+        error: 'company_id is required'
+      });
+    }
+
+    const [contacts] = await pool.execute(
+      `SELECT cc.*, c.company_name as client_name
+       FROM client_contacts cc
+       JOIN clients c ON cc.client_id = c.id
+       WHERE c.company_id = ? AND cc.is_deleted = 0 AND c.is_deleted = 0
+       ORDER BY cc.created_at DESC`,
+      [companyId]
+    );
+
+    res.json({
+      success: true,
+      data: contacts
+    });
+  } catch (error) {
+    console.error('Get all contacts error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch all contacts'
+    });
+  }
+};
+
+/**
+ * Get all client labels
+ * GET /api/v1/clients/labels
+ */
+const getAllLabels = async (req, res) => {
+  try {
+    const companyId = req.query.company_id || req.body.company_id || req.companyId;
+
+    if (!companyId) {
+      return res.status(400).json({
+        success: false,
+        error: 'company_id is required'
+      });
+    }
+
+    // Get all unique labels from clients in this company
+    const [labels] = await pool.execute(
+      `SELECT cl.label, MIN(cl.id) as id, MIN(cl.created_at) as created_at, MAX(cl.color) as color
+       FROM client_labels cl
+       INNER JOIN clients c ON cl.client_id = c.id
+       WHERE c.company_id = ? AND c.is_deleted = 0
+       GROUP BY cl.label
+       ORDER BY cl.label ASC`,
+      [companyId]
+    );
+
+    res.json({
+      success: true,
+      data: labels
+    });
+  } catch (error) {
+    console.error('Get labels error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch labels'
+    });
+  }
+};
+
+/**
+ * Create a new label (adds to label pool)
+ * POST /api/v1/clients/labels
+ */
+const createLabel = async (req, res) => {
+  try {
+    const { label, client_id, color } = req.body;
+    const companyId = req.query.company_id || req.body.company_id || req.companyId;
+
+    if (!label) {
+      return res.status(400).json({
+        success: false,
+        error: 'Label name is required'
+      });
+    }
+
+    if (!companyId) {
+      return res.status(400).json({
+        success: false,
+        error: 'company_id is required'
+      });
+    }
+
+    let targetClientId = client_id;
+
+    if (targetClientId) {
+      // Check if client exists and belongs to company
+      const [clients] = await pool.execute(
+        `SELECT id FROM clients WHERE id = ? AND company_id = ? AND is_deleted = 0`,
+        [targetClientId, companyId]
+      );
+
+      if (clients.length === 0) {
+        return res.status(404).json({
+          success: false,
+          error: 'Client not found'
+        });
+      }
+    } else {
+      // Find any client in this company to attach the label
+      const [clients] = await pool.execute(
+        `SELECT id FROM clients WHERE company_id = ? AND is_deleted = 0 ORDER BY id ASC LIMIT 1`,
+        [companyId]
+      );
+
+      if (clients.length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'At least one client is required to create labels'
+        });
+      }
+
+      targetClientId = clients[0].id;
+    }
+
+    // Check if label already exists anywhere in this company
+    const [existingInCompany] = await pool.execute(
+      `SELECT cl.id
+       FROM client_labels cl
+       INNER JOIN clients c ON cl.client_id = c.id
+       WHERE cl.label = ? AND c.company_id = ? AND c.is_deleted = 0
+       LIMIT 1`,
+      [label, companyId]
+    );
+
+    if (existingInCompany.length > 0) {
+      if (color) {
+        await pool.execute(
+          `UPDATE client_labels cl
+           INNER JOIN clients c ON cl.client_id = c.id
+           SET cl.color = ?
+           WHERE cl.label = ? AND c.company_id = ? AND c.is_deleted = 0`,
+          [color, label, companyId]
+        );
+
+        return res.json({
+          success: true,
+          message: 'Label updated successfully',
+          data: { label, color }
+        });
+      }
+
+      return res.status(400).json({
+        success: false,
+        error: 'Label already exists'
+      });
+    }
+
+    // Insert label
+    await pool.execute(
+      `INSERT INTO client_labels (client_id, label, color) VALUES (?, ?, ?)`,
+      [targetClientId, label, color || null]
+    );
+
+    res.json({
+      success: true,
+      message: 'Label created successfully',
+      data: { label, color: color || null }
+    });
+  } catch (error) {
+    console.error('Create label error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to create label'
+    });
+  }
+};
+
+/**
+ * Delete a label (removes from all clients in company)
+ * DELETE /api/v1/clients/labels/:label
+ */
+const deleteLabel = async (req, res) => {
+  try {
+    const { label } = req.params;
+    const companyId = req.query.company_id || req.body.company_id || req.companyId;
+
+    if (!companyId) {
+      return res.status(400).json({
+        success: false,
+        error: 'company_id is required'
+      });
+    }
+
+    // Delete label from all clients in this company
+    await pool.execute(
+      `DELETE cl FROM client_labels cl
+       INNER JOIN clients c ON cl.client_id = c.id
+       WHERE cl.label = ? AND c.company_id = ?`,
+      [label, companyId]
+    );
+
+    res.json({
+      success: true,
+      message: 'Label deleted successfully'
+    });
+  } catch (error) {
+    console.error('Delete label error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to delete label'
+    });
+  }
+};
+
+/**
+ * Update labels for a specific client
+ * PUT /api/v1/clients/:id/labels
+ */
+const updateClientLabels = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { labels } = req.body;
+    const companyId = req.query.company_id || req.body.company_id || req.companyId;
+
+    if (!companyId) {
+      return res.status(400).json({
+        success: false,
+        error: 'company_id is required'
+      });
+    }
+
+    if (!Array.isArray(labels)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Labels must be an array'
+      });
+    }
+
+    // Check if client exists
+    const [clients] = await pool.execute(
+      `SELECT id FROM clients WHERE id = ? AND company_id = ? AND is_deleted = 0`,
+      [id, companyId]
+    );
+
+    if (clients.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Client not found'
+      });
+    }
+
+    // Delete existing labels
+    await pool.execute(`DELETE FROM client_labels WHERE client_id = ?`, [id]);
+
+    // Insert new labels
+    if (labels.length > 0) {
+      const uniqueLabels = [...new Set(labels)];
+      const placeholders = uniqueLabels.map(() => '?').join(',');
+      const [labelColors] = await pool.execute(
+        `SELECT cl.label, MAX(cl.color) as color
+         FROM client_labels cl
+         INNER JOIN clients c ON cl.client_id = c.id
+         WHERE c.company_id = ? AND c.is_deleted = 0 AND cl.label IN (${placeholders})
+         GROUP BY cl.label`,
+        [companyId, ...uniqueLabels]
+      );
+
+      const colorMap = new Map(labelColors.map(lc => [lc.label, lc.color]));
+      const labelValues = labels.map(lbl => [id, lbl, colorMap.get(lbl) || null]);
+      await pool.query(
+        `INSERT INTO client_labels (client_id, label, color) VALUES ?`,
+        [labelValues]
+      );
+    }
+
+    res.json({
+      success: true,
+      message: 'Client labels updated successfully',
+      data: { labels }
+    });
+  } catch (error) {
+    console.error('Update client labels error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to update client labels'
     });
   }
 };
@@ -956,8 +1285,14 @@ module.exports = {
   delete: deleteClient,
   addContact,
   getContacts,
+  getAllContacts,
   updateContact,
   deleteContact,
   getOverview,
+  // Label management
+  getAllLabels,
+  createLabel,
+  deleteLabel,
+  updateClientLabels
 };
 

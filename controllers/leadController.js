@@ -3,6 +3,7 @@
 // =====================================================
 
 const pool = require('../config/db');
+const bcrypt = require('bcryptjs');
 
 /**
  * Helper function to convert ISO 8601 date string to MySQL DATE format (YYYY-MM-DD)
@@ -14,12 +15,12 @@ const convertToMySQLDate = (dateValue) => {
   if (dateValue === null || dateValue === undefined) {
     return null;
   }
-  
+
   // Handle empty strings
   if (dateValue === '' || (typeof dateValue === 'string' && dateValue.trim() === '')) {
     return null;
   }
-  
+
   // If it's already a Date object, format it
   if (dateValue instanceof Date) {
     if (isNaN(dateValue.getTime())) {
@@ -30,16 +31,16 @@ const convertToMySQLDate = (dateValue) => {
     const day = String(dateValue.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
   }
-  
+
   // If it's a string, parse it
   if (typeof dateValue === 'string') {
     const trimmed = dateValue.trim();
-    
+
     // Handle empty string after trim
     if (trimmed === '') {
       return null;
     }
-    
+
     // Handle ISO 8601 format: '2025-12-25T00:00:00.000Z' or '2025-12-25T00:00:00Z'
     // Split on 'T' and take the date part (first 10 characters: YYYY-MM-DD)
     if (trimmed.includes('T')) {
@@ -49,12 +50,12 @@ const convertToMySQLDate = (dateValue) => {
         return datePart;
       }
     }
-    
+
     // If it's already in YYYY-MM-DD format, validate and return
     if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
       return trimmed;
     }
-    
+
     // Try to parse as Date and format
     const date = new Date(trimmed);
     if (!isNaN(date.getTime())) {
@@ -64,7 +65,7 @@ const convertToMySQLDate = (dateValue) => {
       return `${year}-${month}-${day}`;
     }
   }
-  
+
   return null;
 };
 
@@ -79,12 +80,12 @@ const sanitizeInteger = (intValue) => {
   if (intValue === null || intValue === undefined) {
     return null;
   }
-  
+
   // Convert empty strings to null (check multiple ways)
   if (intValue === '' || intValue === 'null' || intValue === 'undefined') {
     return null;
   }
-  
+
   // If it's a string, trim and check if empty
   if (typeof intValue === 'string') {
     const trimmed = intValue.trim();
@@ -99,7 +100,7 @@ const sanitizeInteger = (intValue) => {
     }
     return parsed;
   }
-  
+
   // If it's already a number, validate and convert to integer
   if (typeof intValue === 'number') {
     if (isNaN(intValue) || !isFinite(intValue)) {
@@ -107,7 +108,7 @@ const sanitizeInteger = (intValue) => {
     }
     return parseInt(intValue, 10);
   }
-  
+
   // For any other type, return null
   return null;
 };
@@ -121,10 +122,10 @@ const getAll = async (req, res) => {
     const { status, owner_id, source, city } = req.query;
     // company_id is optional - if not provided, return all leads
     const companyId = req.query.company_id || req.body.company_id || req.companyId;
-    
+
     let whereClause = 'WHERE l.is_deleted = 0';
     const params = [];
-    
+
     // Filter by company_id only if provided
     if (companyId) {
       whereClause += ' AND l.company_id = ?';
@@ -191,7 +192,7 @@ const getById = async (req, res) => {
 
     // Admin must provide company_id - required for filtering
     const companyId = req.query.company_id || req.body.company_id || req.companyId;
-    
+
     if (!companyId) {
       return res.status(400).json({
         success: false,
@@ -254,7 +255,7 @@ const create = async (req, res) => {
     const sanitizedOwnerId = sanitizeInteger(owner_id);
     const sanitizedValue = sanitizeInteger(value);
     const sanitizedProbability = sanitizeInteger(probability);
-    
+
     // Only validate owner_id if provided, otherwise use default
     const effectiveOwnerId = sanitizedOwnerId || req.userId || 1;
 
@@ -343,13 +344,13 @@ const update = async (req, res) => {
     const updateFields = req.body;
 
     const companyId = req.companyId || req.query.company_id || req.body.company_id || 1;
-    
+
     // Pre-process and sanitize updateFields BEFORE building query
     // Convert due_followup date format if present
     if (updateFields.hasOwnProperty('due_followup')) {
       updateFields.due_followup = convertToMySQLDate(updateFields.due_followup);
     }
-    
+
     // Sanitize integer fields if present
     const integerFields = ['owner_id', 'value', 'probability'];
     for (const intField of integerFields) {
@@ -357,7 +358,7 @@ const update = async (req, res) => {
         updateFields[intField] = sanitizeInteger(updateFields[intField]);
       }
     }
-    
+
     // Check if lead exists
     const [leads] = await pool.execute(
       `SELECT id FROM leads WHERE id = ? AND company_id = ? AND is_deleted = 0`,
@@ -380,16 +381,16 @@ const update = async (req, res) => {
 
     const updates = [];
     const values = [];
-    
+
     for (const field of allowedFields) {
       if (updateFields.hasOwnProperty(field)) {
         let fieldValue = updateFields[field];
-        
+
         // Convert undefined to null for other fields
         if (fieldValue === undefined) {
           fieldValue = null;
         }
-        
+
         updates.push(`${field} = ?`);
         values.push(fieldValue);
       }
@@ -504,28 +505,54 @@ const deleteLead = async (req, res) => {
  * POST /api/v1/leads/:id/convert-to-client
  */
 const convertToClient = async (req, res) => {
+  const connection = await pool.getConnection();
+  await connection.beginTransaction();
+
   try {
     const { id } = req.params;
 
+    // Destructure properties and default to null so that we never pass undefined to SQL
+    const {
+      companyName = null,
+      email = null,
+      password = null,
+      address = null,
+      city = null,
+      state = null,
+      zip = null,
+      country = 'United States',
+      phoneCountryCode = '+1',
+      phoneNumber = null,
+      website = null,
+      vatNumber = null,
+      gstNumber = null,
+      currency = 'USD',
+      currencySymbol = '$',
+      disableOnlinePayment = 0
+    } = req.body;
+
     // Ensure company_id is properly parsed as integer
     const companyId = parseInt(req.companyId || req.query.company_id || req.body.company_id || 0, 10);
-    const userId = req.userId || req.user?.id || req.body.user_id || null;
-    
-    // company_id is required for admin users
+
+    // company_id is required
     if (!companyId || isNaN(companyId) || companyId <= 0) {
+      await connection.rollback();
+      connection.release();
       return res.status(400).json({
         success: false,
-        error: 'company_id is required and must be a valid positive number'
+        error: 'company_id is required'
       });
     }
-    
-    // Get lead
-    const [leads] = await pool.execute(
+
+    // Get lead to verify existence
+    const [leads] = await connection.execute(
       `SELECT * FROM leads WHERE id = ? AND company_id = ? AND is_deleted = 0`,
       [id, companyId]
     );
 
     if (leads.length === 0) {
+      await connection.rollback();
+      connection.release();
       return res.status(404).json({
         success: false,
         error: 'Lead not found'
@@ -534,95 +561,108 @@ const convertToClient = async (req, res) => {
 
     const lead = leads[0];
 
-    // Ensure owner_id is not null - use lead's owner_id or current user's id or find a default user
-    let ownerId = lead.owner_id;
-    
-    if (!ownerId || ownerId === null) {
-      // Try to use current user's id
-      if (userId) {
-        ownerId = userId;
-      } else {
-        // Find any active user from the same company
-        const [users] = await pool.execute(
-          `SELECT id FROM users WHERE company_id = ? AND is_deleted = 0 AND status = 'Active' LIMIT 1`,
-          [companyId]
-        );
-        if (users.length > 0) {
-          ownerId = users[0].id;
-        } else {
-          return res.status(400).json({
-            success: false,
-            error: 'No valid owner found. Please ensure there is at least one active user in the company.'
-          });
-        }
-      }
-    }
-
-    // Ensure company_name is not null
-    const companyName = lead.company_name || lead.person_name || 'Unknown Company';
-    if (!companyName || companyName.trim() === '') {
+    // Validate strictly required fields
+    if (!companyName || !email || !password) {
+      await connection.rollback();
+      connection.release();
       return res.status(400).json({
         success: false,
-        error: 'Lead must have a company name or person name to convert to client'
+        error: 'Company Name, Email and Password are required'
       });
     }
 
-    // Create client - owner_id is required
-    const [clientResult] = await pool.execute(
+    // Check if user already exists
+    const [existingUsers] = await connection.execute(
+      `SELECT id FROM users WHERE email = ? AND company_id = ?`,
+      [email, companyId]
+    );
+
+    if (existingUsers.length > 0) {
+      await connection.rollback();
+      connection.release();
+      return res.status(400).json({
+        success: false,
+        error: 'User with this email already exists'
+      });
+    }
+
+    // Create user account first
+    // Note: bcrypt must be initialized/imported
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const [userResult] = await connection.execute(
+      `INSERT INTO users (company_id, name, email, password, role, status)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        companyId,
+        companyName,
+        email,
+        hashedPassword,
+        'CLIENT',
+        'Active'
+      ]
+    );
+
+    const ownerId = userResult.insertId;
+
+    // Create client
+    const [clientResult] = await connection.execute(
       `INSERT INTO clients (
         company_id, company_name, owner_id, address, city, state, zip, country,
         phone_country_code, phone_number, website, vat_number, gst_number,
-        currency, currency_symbol, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        currency, currency_symbol, disable_online_payment, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         companyId,
         companyName,
         ownerId,
-        lead.address ?? null,
-        lead.city ?? null,
-        lead.state ?? null,
-        lead.zip ?? null,
-        lead.country || 'United States',
-        '+1',
-        lead.phone ?? null,
-        lead.source ?? null,
-        null,
-        null,
-        'USD',
-        '$',
+        address || lead.address || null,
+        city || lead.city || null,
+        state || lead.state || null,
+        zip || lead.zip || null,
+        country || lead.country || 'United States',
+        phoneCountryCode || '+1',
+        phoneNumber || lead.phone || null,
+        website || null,
+        vatNumber || null,
+        gstNumber || null,
+        currency || 'USD',
+        currencySymbol || '$',
+        disableOnlinePayment || 0,
         'Active'
       ]
     );
 
     const clientId = clientResult.insertId;
 
-    // Create client contact only if name and email are available
-    if (lead.person_name && lead.email) {
-      try {
-        await pool.execute(
-          `INSERT INTO client_contacts (
-            client_id, name, job_title, email, phone, is_primary
-          ) VALUES (?, ?, ?, ?, ?, ?)`,
-          [
-            clientId,
-            lead.person_name,
-            null,
-            lead.email,
-            lead.phone ?? null,
-            1
-          ]
-        );
-      } catch (contactError) {
-        console.warn('Failed to create client contact, but client was created:', contactError);
-        // Continue even if contact creation fails
-      }
+    // Create primary contact
+    // Determine contact name safely
+    const contactName = lead.person_name || companyName || 'Contact';
+    const contactPhone = phoneNumber || lead.phone || null;
+
+    if (contactName) {
+      await connection.execute(
+        `INSERT INTO client_contacts (
+          client_id, name, job_title, email, phone, is_primary
+        ) VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          clientId,
+          contactName,
+          null, // job_title is explicitly null
+          email,
+          contactPhone,
+          1
+        ]
+      );
     }
 
     // Update lead status to 'Won'
-    await pool.execute(
+    await connection.execute(
       `UPDATE leads SET status = 'Won', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
       [id]
     );
+
+    await connection.commit();
+    connection.release();
 
     res.json({
       success: true,
@@ -630,17 +670,13 @@ const convertToClient = async (req, res) => {
       message: 'Lead converted to client successfully'
     });
   } catch (error) {
+    if (connection) await connection.rollback();
+    if (connection) connection.release();
     console.error('Convert lead error:', error);
-    console.error('Error details:', {
-      message: error.message,
-      code: error.code,
-      sqlMessage: error.sqlMessage,
-      sqlState: error.sqlState
-    });
     res.status(500).json({
       success: false,
       error: 'Failed to convert lead to client',
-      details: error.sqlMessage || error.message
+      details: error.message
     });
   }
 };
@@ -654,7 +690,7 @@ const getOverview = async (req, res) => {
     const { date_range = 'all', start_date, end_date } = req.query;
     // Ensure company_id is properly parsed as integer
     const companyId = parseInt(req.companyId || req.query.company_id || req.body.company_id || 0, 10);
-    
+
     // Log for debugging
     console.log('Leads Overview API - Request details:', {
       query: req.query,
@@ -662,7 +698,7 @@ const getOverview = async (req, res) => {
       reqCompanyId: req.companyId,
       queryCompanyId: req.query.company_id
     });
-    
+
     // company_id is required for admin users
     if (!companyId || isNaN(companyId) || companyId <= 0) {
       return res.status(400).json({
@@ -674,7 +710,7 @@ const getOverview = async (req, res) => {
     // Calculate date range
     let dateFilter = '';
     const dateParams = [];
-    
+
     if (date_range === 'today') {
       dateFilter = 'AND DATE(l.created_at) = CURDATE()';
     } else if (date_range === 'this_week') {
@@ -759,13 +795,13 @@ const getOverview = async (req, res) => {
        LIMIT 10
     `;
     const assignedUsersParams = [companyId, ...dateParams, companyId];
-    
+
     console.log('Assigned Users Query:', assignedUsersQuery);
     console.log('Assigned Users Params:', assignedUsersParams);
     console.log('Company ID being used:', companyId);
-    
+
     const [assignedUsersResult] = await pool.execute(assignedUsersQuery, assignedUsersParams);
-    
+
     console.log('Assigned Users Result count:', assignedUsersResult.length);
 
     // Follow-up Today
@@ -987,14 +1023,14 @@ const getAllContacts = async (req, res) => {
   try {
     // Admin must provide company_id - required for filtering
     const companyId = req.query.company_id || req.body.company_id || req.companyId;
-    
+
     if (!companyId) {
       return res.status(400).json({
         success: false,
         error: 'company_id is required'
       });
     }
-    
+
     const { contact_type, status, search, lead_id } = req.query;
 
     let whereClause = 'WHERE c.company_id = ? AND c.is_deleted = 0';
@@ -1126,10 +1162,10 @@ const createContact = async (req, res) => {
       status = 'Active',
       notes,
     } = req.body;
-    
+
     // Admin must provide company_id - required for filtering
     const companyId = req.body.company_id || req.query.company_id || req.companyId;
-    
+
     if (!companyId) {
       return res.status(400).json({
         success: false,
@@ -1334,7 +1370,7 @@ const deleteContact = async (req, res) => {
 const getAllLabels = async (req, res) => {
   try {
     const companyId = req.query.company_id || req.body.company_id || req.companyId;
-    
+
     if (!companyId) {
       return res.status(400).json({
         success: false,
@@ -1373,7 +1409,7 @@ const createLabel = async (req, res) => {
   try {
     const { label, lead_id } = req.body;
     const companyId = req.query.company_id || req.body.company_id || req.companyId;
-    
+
     if (!label) {
       return res.status(400).json({
         success: false,
@@ -1445,7 +1481,7 @@ const deleteLabel = async (req, res) => {
   try {
     const { label } = req.params;
     const companyId = req.query.company_id || req.body.company_id || req.companyId;
-    
+
     if (!companyId) {
       return res.status(400).json({
         success: false,
@@ -1483,7 +1519,7 @@ const updateLeadLabels = async (req, res) => {
     const { id } = req.params;
     const { labels } = req.body;
     const companyId = req.query.company_id || req.body.company_id || req.companyId;
-    
+
     if (!companyId) {
       return res.status(400).json({
         success: false,

@@ -2,14 +2,25 @@ const express = require('express');
 const router = express.Router();
 const attendanceController = require('../controllers/attendanceController');
 
-// No authentication required - all routes are public
-router.get('/calendar', attendanceController.getMonthlyCalendar);
-router.get('/percentage', attendanceController.getAttendancePercentage);
-router.get('/today', attendanceController.getTodayStatus);
+// Get all attendance records
 router.get('/', attendanceController.getAll);
+
+// Get attendance summary (calendar view)
+router.get('/summary', attendanceController.getSummary);
+
+// Get employee attendance for a month
+router.get('/employee/:employeeId', attendanceController.getEmployeeAttendance);
+
+// Get attendance by ID
 router.get('/:id', attendanceController.getById);
-router.post('/check-in', attendanceController.checkIn);
-router.post('/check-out', attendanceController.checkOut);
+
+// Mark attendance (create or update)
+router.post('/', attendanceController.markAttendance);
+
+// Bulk mark attendance
+router.post('/bulk', attendanceController.bulkMarkAttendance);
+
+// Delete attendance
+router.delete('/:id', attendanceController.deleteAttendance);
 
 module.exports = router;
-

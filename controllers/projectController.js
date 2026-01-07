@@ -180,7 +180,8 @@ const getAll = async (req, res) => {
               d.name as department_name,
               pm_user.name as project_manager_name,
               pm_user.email as project_manager_email,
-              creator.name as created_by_name
+              creator.name as created_by_name,
+              CASE WHEN p.client_id IS NOT NULL THEN 'Client Project' ELSE 'Internal Project' END as project_type
        FROM projects p
        LEFT JOIN clients c ON p.client_id = c.id
        LEFT JOIN companies comp ON p.company_id = comp.id
@@ -240,7 +241,8 @@ const getById = async (req, res) => {
               comp.name as company_name,
               d.name as department_name,
               pm_user.name as project_manager_name,
-              creator.name as created_by_name
+              creator.name as created_by_name,
+              CASE WHEN p.client_id IS NOT NULL THEN 'Client Project' ELSE 'Internal Project' END as project_type
        FROM projects p
        LEFT JOIN clients c ON p.client_id = c.id
        LEFT JOIN companies comp ON p.company_id = comp.id
@@ -707,7 +709,7 @@ const uploadFile = async (req, res) => {
 
     // Insert into documents table (more reliable)
     const companyId = req.query.company_id || req.body.company_id || 1;
-    
+
     const [result] = await pool.execute(
       `INSERT INTO documents (company_id, project_id, title, file_name, file_path, file_size, file_type, description, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
@@ -942,6 +944,118 @@ const getFiles = async (req, res) => {
   }
 };
 
+/**
+ * Get all project labels
+ * GET /api/v1/projects/labels
+ */
+const getAllLabels = async (req, res) => {
+  try {
+    const companyId = req.query.company_id || req.body.company_id || req.companyId;
+
+    if (!companyId) {
+      return res.status(400).json({
+        success: false,
+        error: 'company_id is required'
+      });
+    }
+
+    const [labels] = await pool.execute(
+      `SELECT * FROM project_labels WHERE company_id = ? AND is_deleted = 0 ORDER BY name ASC`,
+      [companyId]
+    );
+
+    res.json({
+      success: true,
+      data: labels
+    });
+  } catch (error) {
+    console.error('Get project labels error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch project labels'
+    });
+  }
+};
+
+/**
+ * Create a new project label
+ * POST /api/v1/projects/labels
+ */
+const createLabel = async (req, res) => {
+  try {
+    const { name, color } = req.body;
+    const companyId = req.query.company_id || req.body.company_id || req.companyId;
+
+    if (!name || !companyId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Label name and company_id are required'
+      });
+    }
+
+    // Check if exists
+    const [existing] = await pool.execute(
+      'SELECT id FROM project_labels WHERE company_id = ? AND name = ? AND is_deleted = 0',
+      [companyId, name]
+    );
+
+    if (existing.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Label already exists'
+      });
+    }
+
+    const [result] = await pool.execute(
+      'INSERT INTO project_labels (company_id, name, color) VALUES (?, ?, ?)',
+      [companyId, name, color || '#3b82f6']
+    );
+
+    res.status(201).json({
+      success: true,
+      message: 'Label created successfully',
+      data: {
+        id: result.insertId,
+        name,
+        color: color || '#3b82f6'
+      }
+    });
+  } catch (error) {
+    console.error('Create project label error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create project label'
+    });
+  }
+};
+
+/**
+ * Delete a project label
+ * DELETE /api/v1/projects/labels/:id
+ */
+const deleteLabel = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const companyId = req.query.company_id || req.body.company_id || req.companyId;
+
+    await pool.execute(
+      'UPDATE project_labels SET is_deleted = 1 WHERE id = ? AND company_id = ?',
+      [id, companyId]
+    );
+
+    res.json({
+      success: true,
+      message: 'Label deleted successfully'
+    });
+  } catch (error) {
+    console.error('Delete project label error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to delete project label'
+    });
+  }
+};
+
 module.exports = {
   getAll,
   getById,
@@ -952,5 +1066,8 @@ module.exports = {
   uploadFile,
   getMembers,
   getTasks,
-  getFiles
+  getFiles,
+  getAllLabels,
+  createLabel,
+  deleteLabel
 };

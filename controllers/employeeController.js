@@ -7,14 +7,14 @@ const getAll = async (req, res) => {
 
     // Admin must provide company_id - required for filtering
     const filterCompanyId = req.query.company_id || req.body.company_id || req.companyId;
-    
+
     if (!filterCompanyId) {
       return res.status(400).json({
         success: false,
         error: 'company_id is required'
       });
     }
-    
+
     let whereClause = 'WHERE u.company_id = ? AND u.is_deleted = 0';
     const params = [filterCompanyId];
 
@@ -37,7 +37,7 @@ const getAll = async (req, res) => {
     // Get all employees without pagination
     const [employees] = await pool.execute(
       `SELECT e.*, 
-              u.name, u.email, u.phone, u.address, u.role as user_role, u.status,
+              u.name, u.email, u.phone, u.address, u.country, u.email_notifications, u.role as user_role, u.status,
               u.company_id,
               c.name as company_name,
               d.name as department_name, 
@@ -67,8 +67,8 @@ const getAll = async (req, res) => {
       sqlState: error.sqlState,
       sqlMessage: error.sqlMessage
     });
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       error: 'Failed to fetch employees',
       details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
@@ -81,10 +81,10 @@ const getAll = async (req, res) => {
  */
 const create = async (req, res) => {
   try {
-    const { 
-      name, email, phone, password, role, 
-      company_id, department_id, position_id, 
-      employee_number, joining_date, salary, address, status 
+    const {
+      name, email, phone, password, role,
+      company_id, department_id, position_id,
+      employee_number, joining_date, salary, address, status
     } = req.body;
 
     console.log('=== CREATE EMPLOYEE REQUEST ===');
@@ -100,7 +100,7 @@ const create = async (req, res) => {
 
     // Use company_id from request body, fallback to req.companyId
     const finalCompanyId = company_id || req.companyId;
-    
+
     if (!finalCompanyId) {
       return res.status(400).json({
         success: false,
@@ -132,14 +132,16 @@ const create = async (req, res) => {
       // Create user first
       const hashedPassword = await bcrypt.hash(defaultPassword, 10);
       const [userResult] = await connection.execute(
-        `INSERT INTO users (company_id, name, email, phone, address, password, role, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO users (company_id, name, email, phone, address, country, email_notifications, password, role, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           finalCompanyId,
           name,
           email,
           phone || null,
           address || null,
+          req.body.country || null,
+          req.body.email_notifications !== undefined ? req.body.email_notifications : 1,
           hashedPassword,
           role || 'EMPLOYEE',
           status || 'Active'
@@ -162,8 +164,13 @@ const create = async (req, res) => {
 
       // Create employee record
       const [employeeResult] = await connection.execute(
-        `INSERT INTO employees (user_id, employee_number, department_id, position_id, role, joining_date, salary)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO employees (
+          user_id, employee_number, department_id, position_id, role, joining_date, salary,
+          salutation, date_of_birth, gender, reporting_to, language, about, hourly_rate, 
+          slack_member_id, skills, probation_end_date, notice_period_start_date, 
+          notice_period_end_date, employment_type, marital_status, business_address
+        )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           userId,
           empNumber,
@@ -171,7 +178,22 @@ const create = async (req, res) => {
           position_id || null,
           role || null,
           joining_date || null,
-          salary || null
+          salary || null,
+          req.body.salutation || null,
+          req.body.date_of_birth || null,
+          req.body.gender || 'Male',
+          req.body.reporting_to || null,
+          req.body.language || 'en',
+          req.body.about || null,
+          req.body.hourly_rate || null,
+          req.body.slack_member_id || null,
+          req.body.skills || null,
+          req.body.probation_end_date || null,
+          req.body.notice_period_start_date || null,
+          req.body.notice_period_end_date || null,
+          req.body.employment_type || 'Full Time',
+          req.body.marital_status || 'Single',
+          req.body.business_address || null
         ]
       );
 
@@ -227,7 +249,7 @@ const getById = async (req, res) => {
 
     const [employees] = await pool.execute(
       `SELECT e.*, 
-              u.name, u.email, u.phone, u.address, u.role as user_role, u.status,
+              u.name, u.email, u.phone, u.address, u.country, u.email_notifications, u.role as user_role, u.status,
               u.company_id,
               c.name as company_name,
               d.name as department_name, 
@@ -268,7 +290,7 @@ const getById = async (req, res) => {
 const update = async (req, res) => {
   try {
     const { id } = req.params;
-    const { 
+    const {
       name, email, phone, address,
       company_id, department_id, position_id,
       employee_number, joining_date, salary, role, status
@@ -345,6 +367,14 @@ const update = async (req, res) => {
         userUpdateFields.push('status = ?');
         userUpdateValues.push(status);
       }
+      if (req.body.country !== undefined) {
+        userUpdateFields.push('country = ?');
+        userUpdateValues.push(req.body.country);
+      }
+      if (req.body.email_notifications !== undefined) {
+        userUpdateFields.push('email_notifications = ?');
+        userUpdateValues.push(req.body.email_notifications);
+      }
 
       if (userUpdateFields.length > 0) {
         userUpdateValues.push(userId);
@@ -387,6 +417,21 @@ const update = async (req, res) => {
         empUpdateFields.push('role = ?');
         empUpdateValues.push(role || null);
       }
+
+      // New fields update
+      const newFields = [
+        'salutation', 'date_of_birth', 'gender', 'reporting_to', 'language', 'about',
+        'hourly_rate', 'slack_member_id', 'skills', 'probation_end_date',
+        'notice_period_start_date', 'notice_period_end_date', 'employment_type',
+        'marital_status', 'business_address'
+      ];
+
+      newFields.forEach(field => {
+        if (req.body[field] !== undefined) {
+          empUpdateFields.push(`${field} = ?`);
+          empUpdateValues.push(req.body[field] === '' ? null : req.body[field]);
+        }
+      });
 
       if (empUpdateFields.length > 0) {
         empUpdateValues.push(id);
@@ -659,7 +704,7 @@ const updateProfile = async (req, res) => {
     if (userUpdateFields.length > 0) {
       userUpdateFields.push('updated_at = CURRENT_TIMESTAMP');
       userUpdateValues.push(userId);
-      
+
       await pool.execute(
         `UPDATE users SET ${userUpdateFields.join(', ')} WHERE id = ?`,
         userUpdateValues

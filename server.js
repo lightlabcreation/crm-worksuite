@@ -68,12 +68,11 @@ app.use(
       process.env.FRONTEND_URL,
       "http://localhost:5173",
       "https://crm-update.netlify.app",
-      "https://www.crm-update.netlify.app"
+     
     ],
     credentials: true
   })
 );
-
 
 // Body parser
 app.use(express.json({ limit: '10mb' }));

@@ -9,6 +9,13 @@ const clientController = require('../controllers/clientController');
 // No authentication required - all routes are public
 // IMPORTANT: Specific routes must come before parameterized routes
 router.get('/overview', clientController.getOverview);
+router.get('/contacts/all', clientController.getAllContacts);
+
+// Label management - MUST be before /:id routes
+router.get('/labels', clientController.getAllLabels);
+router.post('/labels', clientController.createLabel);
+router.delete('/labels/:label', clientController.deleteLabel);
+router.put('/:id/labels', clientController.updateClientLabels);
 router.get('/', clientController.getAll);
 router.get('/:id', clientController.getById);
 router.post('/', clientController.create);

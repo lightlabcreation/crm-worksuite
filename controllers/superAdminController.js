@@ -329,7 +329,7 @@ const getSystemStats = async (req, res) => {
       if (results[6].status === 'fulfilled' && results[6].value && results[6].value[0]) activeCompanyCount = results[6].value[0]
       if (results[7].status === 'fulfilled' && results[7].value && results[7].value[0]) inactiveCompanyCount = results[7].value[0]
       if (results[8].status === 'fulfilled' && results[8].value && results[8].value[0]) packageCount = results[8].value[0]
-      
+
       // Log any rejected promises for debugging
       results.forEach((result, index) => {
         if (result.status === 'rejected') {
@@ -407,10 +407,10 @@ const getSystemStats = async (req, res) => {
       // Get current month and last month revenue
       const currentMonth = new Date().toISOString().slice(0, 7) // YYYY-MM
       const lastMonth = new Date(new Date().setMonth(new Date().getMonth() - 1)).toISOString().slice(0, 7)
-      
+
       currentMonthRevenue = revenueData.find(r => r.month === currentMonth)?.total_revenue || 0
       lastMonthRevenue = revenueData.find(r => r.month === lastMonth)?.total_revenue || 0
-      revenueGrowth = lastMonthRevenue > 0 
+      revenueGrowth = lastMonthRevenue > 0
         ? parseFloat(((currentMonthRevenue - lastMonthRevenue) / lastMonthRevenue * 100).toFixed(0))
         : 0
 
@@ -1784,7 +1784,7 @@ const getSystemSettings = async (req, res) => {
     const [settings] = await pool.execute(
       `SELECT * FROM system_settings 
        WHERE company_id IS NULL 
-       AND (setting_key LIKE 'system_%' OR setting_key LIKE 'email_%' OR setting_key LIKE 'backup_%')`
+       AND (setting_key LIKE 'system_%' OR setting_key LIKE 'email_%' OR setting_key LIKE 'backup_%' OR setting_key LIKE 'footer_%')`
     );
 
     const settingsObj = {};
@@ -1808,6 +1808,16 @@ const getSystemSettings = async (req, res) => {
       smtp_password: settingsObj.smtp_password || '',
       backup_frequency: settingsObj.backup_frequency || 'daily',
       enable_audit_log: settingsObj.enable_audit_log === 'true' || true,
+
+      // Footer Settings
+      footer_company_address: settingsObj.footer_company_address || '',
+      footer_privacy_link: settingsObj.footer_privacy_link || '',
+      footer_terms_link: settingsObj.footer_terms_link || '',
+      footer_refund_link: settingsObj.footer_refund_link || '',
+      footer_custom_link_1_text: settingsObj.footer_custom_link_1_text || '',
+      footer_custom_link_1_url: settingsObj.footer_custom_link_1_url || '',
+      footer_custom_link_2_text: settingsObj.footer_custom_link_2_text || '',
+      footer_custom_link_2_url: settingsObj.footer_custom_link_2_url || '',
     };
 
     res.json({
@@ -1834,7 +1844,7 @@ const updateSystemSettings = async (req, res) => {
     // Update or insert each setting in system_settings table (company_id = NULL for system-wide settings)
     for (const [key, value] of Object.entries(settings)) {
       const settingValue = typeof value === 'object' ? JSON.stringify(value) : String(value);
-      
+
       await pool.execute(
         `INSERT INTO system_settings (company_id, setting_key, setting_value, updated_at)
          VALUES (NULL, ?, ?, NOW())

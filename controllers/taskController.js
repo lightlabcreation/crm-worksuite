@@ -49,14 +49,14 @@ const getAll = async (req, res) => {
 
     // Admin must provide company_id - required for filtering
     const filterCompanyId = req.query.company_id || req.body.company_id || req.companyId;
-    
+
     if (!filterCompanyId) {
       return res.status(400).json({
         success: false,
         error: 'company_id is required'
       });
     }
-    
+
     let whereClause = 'WHERE t.company_id = ? AND t.is_deleted = 0';
     const params = [filterCompanyId];
 
@@ -95,16 +95,17 @@ const getAll = async (req, res) => {
       params.push(priority);
     }
     if (search) {
-      whereClause += ' AND (t.title LIKE ? OR t.description LIKE ? OR t.task_code LIKE ?)';
+      whereClause += ' AND (t.title LIKE ? OR t.description LIKE ? OR t.code LIKE ?)';
       const searchPattern = `%${search}%`;
       params.push(searchPattern, searchPattern, searchPattern);
     }
 
     // Get all tasks without pagination
     const [tasks] = await pool.execute(
-      `SELECT t.*, p.project_name, p.short_code as project_code
+      `SELECT t.*, p.project_name, p.short_code as project_code, u.name as created_by_name
        FROM tasks t
        LEFT JOIN projects p ON t.project_id = p.id
+       LEFT JOIN users u ON t.created_by = u.id
        ${whereClause}
        ORDER BY t.created_at DESC`,
       params
@@ -226,7 +227,7 @@ const create = async (req, res) => {
     console.log('Request body:', JSON.stringify(req.body, null, 2));
     console.log('Content-Type:', req.headers['content-type']);
     console.log('File:', req.file ? req.file.originalname : 'No file');
-    
+
     // Parse JSON strings from FormData (multipart/form-data sends arrays as strings)
     const parseJSON = (value, defaultValue = []) => {
       if (Array.isArray(value)) return value;
@@ -239,7 +240,7 @@ const create = async (req, res) => {
       }
       return defaultValue;
     };
-    
+
     const {
       title,
       description,
@@ -260,7 +261,7 @@ const create = async (req, res) => {
       is_recurring,
       recurring_frequency,
     } = req.body;
-    
+
     // Parse arrays that might come as JSON strings from FormData
     const collaborators = parseJSON(req.body.collaborators, []);
     const labels = parseJSON(req.body.labels, []);
@@ -276,12 +277,12 @@ const create = async (req, res) => {
     const safeSubDescription = sub_description ?? null;
     const safeTaskCategory = task_category ?? null;
     const safeDescription = description ?? null;
-    
+
     // Related To - determine based on type
     let safeProjectId = project_id ?? null;
     let safeClientId = client_id ?? null;
     let safeLeadId = lead_id ?? null;
-    
+
     if (related_to_type) {
       if (related_to_type === 'project' && req.body.related_to) {
         safeProjectId = req.body.related_to;
@@ -291,7 +292,7 @@ const create = async (req, res) => {
         safeLeadId = req.body.related_to;
       }
     }
-    
+
     const safePoints = points || 1;
     const safeStartDate = start_date ?? null;
     const safeDeadline = deadline ?? (due_date ?? null);
@@ -485,7 +486,7 @@ const update = async (req, res) => {
     const { id } = req.params;
     // Ensure updateFields is a plain object to avoid hasOwnProperty errors
     const rawFields = req.body && typeof req.body === 'object' ? { ...req.body } : {};
-    
+
     // Sanitize all fields - remove any NaN values
     const updateFields = {};
     for (const [key, value] of Object.entries(rawFields)) {
@@ -531,8 +532,8 @@ const update = async (req, res) => {
 
     // Build update query - Updated with new fields
     const allowedFields = [
-      'title', 'description', 'sub_description', 'task_category', 'project_id', 
-      'company_id', 'start_date', 'due_date', 'status', 'priority', 
+      'title', 'description', 'sub_description', 'task_category', 'project_id',
+      'company_id', 'start_date', 'due_date', 'status', 'priority',
       'estimated_time', 'completed_on'
     ];
 
@@ -579,7 +580,7 @@ const update = async (req, res) => {
         values.push(value);
       }
     }
-    
+
     // Map deadline to due_date if provided
     if (updateFields.hasOwnProperty('deadline') && !updateFields.hasOwnProperty('due_date')) {
       updates.push('due_date = ?');
@@ -599,7 +600,7 @@ const update = async (req, res) => {
     // Update assignees if provided (assign_to + collaborators)
     if (updateFields.assign_to || updateFields.collaborators || updateFields.assigned_to) {
       await pool.execute(`DELETE FROM task_assignees WHERE task_id = ?`, [id]);
-      
+
       const allAssignees = [];
       if (updateFields.assign_to) {
         const assignToId = parseInt(updateFields.assign_to);
@@ -636,7 +637,7 @@ const update = async (req, res) => {
     // Update tags/labels if provided
     if (updateFields.tags || updateFields.labels) {
       await pool.execute(`DELETE FROM task_tags WHERE task_id = ?`, [id]);
-      
+
       const allTags = [];
       if (Array.isArray(updateFields.labels) && updateFields.labels.length > 0) {
         allTags.push(...updateFields.labels);

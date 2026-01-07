@@ -9,7 +9,7 @@ const { validateSettings, sanitizeValue } = require('../utils/settingsValidator'
 /**
  * Get all settings for a company
  */
-const getAllSettings = async (companyId = 1) => {
+const getAllSettings = async (companyId) => {
   try {
     const [settings] = await pool.execute(
       `SELECT * FROM system_settings WHERE company_id = ? OR company_id IS NULL ORDER BY setting_key`,
@@ -24,7 +24,7 @@ const getAllSettings = async (companyId = 1) => {
 /**
  * Get settings by category
  */
-const getSettingsByCategory = async (category, companyId = 1) => {
+const getSettingsByCategory = async (category, companyId) => {
   try {
     const [settings] = await pool.execute(
       `SELECT * FROM system_settings
@@ -42,7 +42,7 @@ const getSettingsByCategory = async (category, companyId = 1) => {
 /**
  * Get a single setting value
  */
-const getSetting = async (key, companyId = 1) => {
+const getSetting = async (key, companyId) => {
   try {
     const [settings] = await pool.execute(
       `SELECT setting_value FROM system_settings

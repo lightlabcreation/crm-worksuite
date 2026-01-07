@@ -7,9 +7,9 @@ const generateTicketId = async (companyId, retryCount = 0) => {
       `SELECT ticket_id FROM tickets WHERE company_id = ?`,
       [companyId]
     );
-    
+
     let maxNum = 0;
-    
+
     // Extract numeric part from all ticket_ids and find the maximum
     for (const ticket of tickets) {
       const match = ticket.ticket_id.match(/TKT-(\d+)/);
@@ -20,23 +20,23 @@ const generateTicketId = async (companyId, retryCount = 0) => {
         }
       }
     }
-    
+
     // Generate next ticket_id (increment from max)
     const nextNum = maxNum + 1 + retryCount; // Add retryCount to handle retries
     const ticketId = `TKT-${String(nextNum).padStart(3, '0')}`;
-    
+
     // Double-check if this ticket_id already exists (race condition protection)
     const [check] = await pool.execute(
       `SELECT ticket_id FROM tickets WHERE ticket_id = ?`,
       [ticketId]
     );
-    
+
     if (check.length > 0) {
       // If it exists, try again with next number
       console.log(`Ticket ID ${ticketId} already exists, will retry with next number`);
       // The retry will happen in the create function
     }
-    
+
     return ticketId;
   } catch (error) {
     console.error('Error generating ticket ID:', error);
@@ -53,7 +53,7 @@ const getAll = async (req, res) => {
     const clientId = req.query.client_id || req.body.client_id;
     const status = req.query.status;
     const priority = req.query.priority;
-    
+
     let whereClause = 'WHERE t.is_deleted = 0';
     const params = [];
 
@@ -90,7 +90,7 @@ const getAll = async (req, res) => {
     const [tickets] = await pool.execute(
       `SELECT t.*, 
               c.company_name as client_name,
-              u.name as assigned_to_name
+              COALESCE(NULLIF(u.name, ''), NULLIF(u.email, ''), 'Unassigned') as assigned_to_name
        FROM tickets t
        LEFT JOIN clients c ON t.client_id = c.id
        LEFT JOIN users u ON t.assigned_to_id = u.id
@@ -98,8 +98,8 @@ const getAll = async (req, res) => {
        ORDER BY t.created_at DESC`,
       params
     );
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       data: tickets
     });
   } catch (error) {
@@ -111,7 +111,7 @@ const getAll = async (req, res) => {
 const create = async (req, res) => {
   let retryCount = 0;
   const maxRetries = 5;
-  
+
   while (retryCount < maxRetries) {
     try {
       const companyId = req.query.company_id || req.body.company_id || 1;
@@ -122,20 +122,48 @@ const create = async (req, res) => {
       const safeSubject = subject && subject.trim() ? subject.trim() : 'Ticket';
       const safePriority = priority && priority.trim() ? priority : 'Medium';
       const safeStatus = status && status.trim() ? status : 'Open';
-      const safeTicketType = ticket_type && ticket_type.trim() ? ticket_type : 'General Support';
 
       // Validate client_id against company; if invalid, set to null to avoid FK issues
       let finalClientId = client_id ?? null;
       if (finalClientId) {
         try {
-          // Validate client_id exists (ignore company match to allow client linkage)
+          // 1. Try treating it as a client.id
           const [clientCheck] = await pool.execute(
             `SELECT id FROM clients WHERE id = ?`,
             [finalClientId]
           );
-          if (clientCheck.length === 0) {
-            console.log(`ℹ️ client_id ${finalClientId} not found, setting to NULL`);
-            finalClientId = null;
+          if (clientCheck.length > 0) {
+            finalClientId = clientCheck[0].id;
+          } else {
+            // 2. Try treating it as a user.id (owner_id)
+            const [clientByOwner] = await pool.execute(
+              `SELECT id FROM clients WHERE owner_id = ?`,
+              [finalClientId]
+            );
+            if (clientByOwner.length > 0) {
+              finalClientId = clientByOwner[0].id;
+            } else {
+              // 3. Try finding by email of the user
+              const [userCheck] = await pool.execute(
+                `SELECT email FROM users WHERE id = ?`,
+                [finalClientId]
+              );
+              if (userCheck.length > 0) {
+                const [clientByEmail] = await pool.execute(
+                  `SELECT id FROM clients WHERE email = ?`,
+                  [userCheck[0].email]
+                );
+                if (clientByEmail.length > 0) {
+                  finalClientId = clientByEmail[0].id;
+                } else {
+                  console.log(`ℹ️ No client found for ID ${finalClientId} (checked id, owner_id, email), setting to NULL`);
+                  finalClientId = null;
+                }
+              } else {
+                console.log(`ℹ️ client_id ${finalClientId} not found, setting to NULL`);
+                finalClientId = null;
+              }
+            }
           }
         } catch (err) {
           console.log('⚠️ client_id validation error, setting client_id to NULL:', err.message);
@@ -144,8 +172,8 @@ const create = async (req, res) => {
       }
 
       const [result] = await pool.execute(
-        `INSERT INTO tickets (company_id, ticket_id, subject, client_id, priority, description, status, assigned_to_id, created_by, ticket_type)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO tickets (company_id, ticket_id, subject, client_id, priority, description, status, assigned_to_id, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           companyId,
           ticket_id,
@@ -155,19 +183,18 @@ const create = async (req, res) => {
           description ?? null,
           safeStatus,
           assigned_to_id ?? null,
-          userId ?? null,
-          safeTicketType
+          userId ?? null
         ]
       );
-      
+
       // Get created ticket
       const [tickets] = await pool.execute(
         `SELECT * FROM tickets WHERE id = ?`,
         [result.insertId]
       );
-      
-      res.status(201).json({ 
-        success: true, 
+
+      res.status(201).json({
+        success: true,
         data: tickets[0],
         message: 'Ticket created successfully'
       });
@@ -179,10 +206,10 @@ const create = async (req, res) => {
         console.log(`Duplicate ticket_id detected, retrying... (attempt ${retryCount}/${maxRetries})`);
         if (retryCount >= maxRetries) {
           console.error('Max retries reached for ticket creation');
-          res.status(500).json({ 
-            success: false, 
-            error: 'Failed to create ticket', 
-            details: 'Unable to generate unique ticket ID after multiple attempts. Please try again.' 
+          res.status(500).json({
+            success: false,
+            error: 'Failed to create ticket',
+            details: 'Unable to generate unique ticket ID after multiple attempts. Please try again.'
           });
           return;
         }
@@ -236,7 +263,7 @@ const getById = async (req, res) => {
     const [tickets] = await pool.execute(
       `SELECT t.*, 
               c.company_name as client_name,
-              u.name as assigned_to_name
+              COALESCE(NULLIF(u.name, ''), NULLIF(u.email, ''), 'Unassigned') as assigned_to_name
        FROM tickets t
        LEFT JOIN clients c ON t.client_id = c.id
        LEFT JOIN users u ON t.assigned_to_id = u.id

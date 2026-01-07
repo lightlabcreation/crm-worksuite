@@ -8,6 +8,11 @@ const projectController = require('../controllers/projectController');
 const { uploadSingle, handleUploadError } = require('../middleware/upload');
 
 // No authentication required - all routes are public
+// Labels
+router.get('/labels', projectController.getAllLabels);
+router.post('/labels', projectController.createLabel);
+router.delete('/labels/:id', projectController.deleteLabel);
+
 router.get('/filters', projectController.getFilters);
 router.get('/', projectController.getAll);
 router.get('/:id', projectController.getById);

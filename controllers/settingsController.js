@@ -12,7 +12,7 @@ const { validateSetting, validateSettings } = require('../utils/settingsValidato
  */
 const get = async (req, res) => {
   try {
-    const companyId = req.query.company_id || req.user?.company_id || 1;
+    const companyId = req.query.company_id || req.user?.company_id || null;
     const settings = await settingsService.getAllSettings(companyId);
 
     res.json({
@@ -36,7 +36,7 @@ const get = async (req, res) => {
 const getByCategory = async (req, res) => {
   try {
     const { category } = req.params;
-    const companyId = req.query.company_id || req.user?.company_id || 1;
+    const companyId = req.query.company_id || req.user?.company_id || null;
 
     if (!category) {
       return res.status(400).json({
@@ -69,7 +69,7 @@ const getByCategory = async (req, res) => {
 const getSingle = async (req, res) => {
   try {
     const { key } = req.params;
-    const companyId = req.query.company_id || req.user?.company_id || 1;
+    const companyId = req.query.company_id || req.user?.company_id || null;
 
     if (!key) {
       return res.status(400).json({

@@ -26,7 +26,7 @@ const runAutoMigrations = async () => {
       `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'estimates' AND COLUMN_NAME = 'lead_id'`
     );
-    
+
     if (columns.length === 0) {
       console.log('📦 Running migration: Adding lead_id to estimates table...');
       await pool.execute('ALTER TABLE estimates ADD COLUMN lead_id INT UNSIGNED NULL AFTER project_id');
@@ -38,7 +38,7 @@ const runAutoMigrations = async () => {
       `SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS 
        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'estimates' AND COLUMN_NAME = 'valid_till'`
     );
-    
+
     if (validTillInfo.length > 0 && validTillInfo[0].IS_NULLABLE === 'NO') {
       console.log('📦 Running migration: Making valid_till nullable in estimates...');
       await pool.execute('ALTER TABLE estimates MODIFY COLUMN valid_till DATE NULL');
@@ -50,7 +50,7 @@ const runAutoMigrations = async () => {
       `SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS 
        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'estimates' AND COLUMN_NAME = 'client_id'`
     );
-    
+
     if (clientIdInfo.length > 0 && clientIdInfo[0].IS_NULLABLE === 'NO') {
       console.log('📦 Running migration: Making client_id nullable in estimates...');
       await pool.execute('ALTER TABLE estimates MODIFY COLUMN client_id INT UNSIGNED NULL');
@@ -62,7 +62,7 @@ const runAutoMigrations = async () => {
       `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'tasks' AND COLUMN_NAME = 'client_id'`
     );
-    
+
     if (taskClientIdColumns.length === 0) {
       console.log('📦 Running migration: Adding client_id to tasks table...');
       await pool.execute('ALTER TABLE tasks ADD COLUMN client_id INT UNSIGNED NULL AFTER project_id');
@@ -74,7 +74,7 @@ const runAutoMigrations = async () => {
       `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'tasks' AND COLUMN_NAME = 'lead_id'`
     );
-    
+
     if (taskLeadIdColumns.length === 0) {
       console.log('📦 Running migration: Adding lead_id to tasks table...');
       await pool.execute('ALTER TABLE tasks ADD COLUMN lead_id INT UNSIGNED NULL AFTER client_id');
@@ -86,7 +86,7 @@ const runAutoMigrations = async () => {
       `SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS 
        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'credit_notes' AND COLUMN_NAME = 'invoice_id'`
     );
-    
+
     if (creditNoteInvoiceIdInfo.length > 0 && creditNoteInvoiceIdInfo[0].IS_NULLABLE === 'NO') {
       console.log('📦 Running migration: Making invoice_id nullable in credit_notes...');
       // First, drop the foreign key constraint if it exists
@@ -111,7 +111,7 @@ const runAutoMigrations = async () => {
       `SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS 
        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'credit_notes' AND COLUMN_NAME = 'amount'`
     );
-    
+
     if (creditNoteAmountInfo.length > 0 && creditNoteAmountInfo[0].IS_NULLABLE === 'NO') {
       console.log('📦 Running migration: Making amount nullable in credit_notes...');
       await pool.execute('ALTER TABLE credit_notes MODIFY COLUMN amount DECIMAL(15, 2) NULL');
@@ -123,7 +123,7 @@ const runAutoMigrations = async () => {
       `SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS 
        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'credit_notes' AND COLUMN_NAME = 'date'`
     );
-    
+
     if (creditNoteDateInfo.length > 0 && creditNoteDateInfo[0].IS_NULLABLE === 'NO') {
       console.log('📦 Running migration: Making date nullable in credit_notes...');
       await pool.execute('ALTER TABLE credit_notes MODIFY COLUMN date DATE NULL');
@@ -135,7 +135,7 @@ const runAutoMigrations = async () => {
       `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'credit_notes' AND COLUMN_NAME = 'client_id'`
     );
-    
+
     if (creditNoteClientIdColumns.length === 0) {
       console.log('📦 Running migration: Adding client_id to credit_notes table...');
       await pool.execute('ALTER TABLE credit_notes ADD COLUMN client_id INT UNSIGNED NULL AFTER invoice_id');
@@ -189,10 +189,10 @@ const runAutoMigrations = async () => {
           INDEX idx_company_id (company_id),
           INDEX idx_is_deleted (is_deleted)
         )`;
-        
+
         await pool.query(createTableSQL);
         console.log('✅ Migration completed: bank_accounts table created');
-        
+
         // Verify table was created
         const [verifyTables] = await pool.execute(
           `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES 
@@ -232,7 +232,7 @@ const runAutoMigrations = async () => {
              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'bank_accounts' AND COLUMN_NAME = ?`,
             [col.name]
           );
-          
+
           if (colCheck.length === 0) {
             console.log(`📦 Running migration: Adding ${col.name} to bank_accounts table...`);
             await pool.execute(`ALTER TABLE bank_accounts ADD COLUMN ${col.name} ${col.type}`);
@@ -244,87 +244,87 @@ const runAutoMigrations = async () => {
         }
       }
 
-    // Make tickets.client_id nullable (drop/re-add FK)
-    try {
-      const [clientColInfo] = await pool.execute(
-        `SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS 
+      // Make tickets.client_id nullable (drop/re-add FK)
+      try {
+        const [clientColInfo] = await pool.execute(
+          `SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS 
          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'tickets' AND COLUMN_NAME = 'client_id'`
-      );
-      if (clientColInfo.length > 0 && clientColInfo[0].IS_NULLABLE === 'NO') {
-        console.log('📦 Running migration: Making client_id nullable in tickets table...');
-        try {
-          const [fkCheck] = await pool.execute(
-            `SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE 
+        );
+        if (clientColInfo.length > 0 && clientColInfo[0].IS_NULLABLE === 'NO') {
+          console.log('📦 Running migration: Making client_id nullable in tickets table...');
+          try {
+            const [fkCheck] = await pool.execute(
+              `SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE 
              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'tickets' 
              AND COLUMN_NAME = 'client_id' AND REFERENCED_TABLE_NAME IS NOT NULL`
-          );
-          if (fkCheck.length > 0) {
-            const fkName = fkCheck[0].CONSTRAINT_NAME;
-            await pool.execute(`ALTER TABLE tickets DROP FOREIGN KEY ${fkName}`);
-            console.log(`   Dropped foreign key constraint: ${fkName}`);
+            );
+            if (fkCheck.length > 0) {
+              const fkName = fkCheck[0].CONSTRAINT_NAME;
+              await pool.execute(`ALTER TABLE tickets DROP FOREIGN KEY ${fkName}`);
+              console.log(`   Dropped foreign key constraint: ${fkName}`);
+            }
+          } catch (fkErr) {
+            console.log('   Note: Could not drop foreign key for client_id:', fkErr.message);
           }
-        } catch (fkErr) {
-          console.log('   Note: Could not drop foreign key for client_id:', fkErr.message);
-        }
 
-        await pool.execute(`ALTER TABLE tickets MODIFY COLUMN client_id INT NULL`);
-        console.log('✅ Migration completed: client_id is now nullable');
+          await pool.execute(`ALTER TABLE tickets MODIFY COLUMN client_id INT NULL`);
+          console.log('✅ Migration completed: client_id is now nullable');
 
-        // Re-add FK allowing NULL
-        try {
-          await pool.execute(
-            `ALTER TABLE tickets ADD CONSTRAINT tickets_client_id_fk 
+          // Re-add FK allowing NULL
+          try {
+            await pool.execute(
+              `ALTER TABLE tickets ADD CONSTRAINT tickets_client_id_fk 
              FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL`
-          );
-          console.log('   Re-added foreign key constraint for client_id (nullable)');
-        } catch (fkErr) {
-          console.log('   Note: Could not re-add foreign key for client_id:', fkErr.message);
+            );
+            console.log('   Re-added foreign key constraint for client_id (nullable)');
+          } catch (fkErr) {
+            console.log('   Note: Could not re-add foreign key for client_id:', fkErr.message);
+          }
         }
+      } catch (err) {
+        console.log('⚠️ Could not modify client_id in tickets:', err.message);
       }
-    } catch (err) {
-      console.log('⚠️ Could not modify client_id in tickets:', err.message);
-    }
 
-    // Make projects.client_id nullable (drop/re-add FK)
-    try {
-      const [projClientColInfo] = await pool.execute(
-        `SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS 
+      // Make projects.client_id nullable (drop/re-add FK)
+      try {
+        const [projClientColInfo] = await pool.execute(
+          `SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS 
          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'projects' AND COLUMN_NAME = 'client_id'`
-      );
-      if (projClientColInfo.length > 0 && projClientColInfo[0].IS_NULLABLE === 'NO') {
-        console.log('📦 Running migration: Making client_id nullable in projects table...');
-        try {
-          const [fkCheck] = await pool.execute(
-            `SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE 
+        );
+        if (projClientColInfo.length > 0 && projClientColInfo[0].IS_NULLABLE === 'NO') {
+          console.log('📦 Running migration: Making client_id nullable in projects table...');
+          try {
+            const [fkCheck] = await pool.execute(
+              `SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE 
              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'projects' 
              AND COLUMN_NAME = 'client_id' AND REFERENCED_TABLE_NAME IS NOT NULL`
-          );
-          if (fkCheck.length > 0) {
-            const fkName = fkCheck[0].CONSTRAINT_NAME;
-            await pool.execute(`ALTER TABLE projects DROP FOREIGN KEY ${fkName}`);
-            console.log(`   Dropped foreign key constraint: ${fkName}`);
+            );
+            if (fkCheck.length > 0) {
+              const fkName = fkCheck[0].CONSTRAINT_NAME;
+              await pool.execute(`ALTER TABLE projects DROP FOREIGN KEY ${fkName}`);
+              console.log(`   Dropped foreign key constraint: ${fkName}`);
+            }
+          } catch (fkErr) {
+            console.log('   Note: Could not drop foreign key for projects.client_id:', fkErr.message);
           }
-        } catch (fkErr) {
-          console.log('   Note: Could not drop foreign key for projects.client_id:', fkErr.message);
-        }
 
-        await pool.execute(`ALTER TABLE projects MODIFY COLUMN client_id INT NULL`);
-        console.log('✅ Migration completed: projects.client_id is now nullable');
+          await pool.execute(`ALTER TABLE projects MODIFY COLUMN client_id INT NULL`);
+          console.log('✅ Migration completed: projects.client_id is now nullable');
 
-        // Re-add FK allowing NULL
-        try {
-          await pool.execute(
-            `ALTER TABLE projects ADD CONSTRAINT projects_client_id_fk 
+          // Re-add FK allowing NULL
+          try {
+            await pool.execute(
+              `ALTER TABLE projects ADD CONSTRAINT projects_client_id_fk 
              FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL`
-          );
-          console.log('   Re-added foreign key constraint for projects.client_id (nullable)');
-        } catch (fkErr) {
-          console.log('   Note: Could not re-add foreign key for projects.client_id:', fkErr.message);
+            );
+            console.log('   Re-added foreign key constraint for projects.client_id (nullable)');
+          } catch (fkErr) {
+            console.log('   Note: Could not re-add foreign key for projects.client_id:', fkErr.message);
+          }
         }
+      } catch (err) {
+        console.log('⚠️ Could not modify client_id in projects:', err.message);
       }
-    } catch (err) {
-      console.log('⚠️ Could not modify client_id in projects:', err.message);
-    }
     }
 
     // Check if orders table exists, create if not
@@ -360,7 +360,7 @@ const runAutoMigrations = async () => {
           FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL,
           FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE SET NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`;
-        
+
         await pool.query(createOrdersTableSQL);
         console.log('✅ Migration completed: orders table created');
       } catch (err) {
@@ -397,7 +397,7 @@ const runAutoMigrations = async () => {
           FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
           FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE SET NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`;
-        
+
         await pool.query(createOrderItemsTableSQL);
         console.log('✅ Migration completed: order_items table created');
       } catch (err) {
@@ -424,7 +424,7 @@ const runAutoMigrations = async () => {
            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'leads' AND COLUMN_NAME = ?`,
           [col.name]
         );
-        
+
         if (colInfo.length > 0 && colInfo[0].IS_NULLABLE === 'NO') {
           console.log(`📦 Running migration: Making ${col.name} nullable in leads table...`);
           // For owner_id and created_by, we need to handle foreign keys carefully
@@ -446,10 +446,10 @@ const runAutoMigrations = async () => {
               console.log(`   Note: Could not drop foreign key for ${col.name}:`, fkErr.message);
             }
           }
-          
+
           await pool.execute(`ALTER TABLE leads MODIFY COLUMN ${col.name} ${col.type}`);
           console.log(`✅ Migration completed: ${col.name} is now nullable`);
-          
+
           // Re-add foreign key for owner_id and created_by if needed (but allow NULL)
           if (col.name === 'owner_id' || col.name === 'created_by') {
             try {
@@ -467,6 +467,141 @@ const runAutoMigrations = async () => {
         console.log(`⚠️ Could not modify ${col.name}:`, err.message);
         // Continue with next column
       }
+    }
+
+    // Check if color column exists in client_labels table
+    const [clientLabelColorColumns] = await pool.execute(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'client_labels' AND COLUMN_NAME = 'color'`
+    );
+
+    if (clientLabelColorColumns.length === 0) {
+      console.log('📦 Running migration: Adding color to client_labels table...');
+      await pool.execute('ALTER TABLE client_labels ADD COLUMN color VARCHAR(20) DEFAULT "#3b82f6" AFTER label');
+      console.log('✅ Migration completed: color column added to client_labels');
+    }
+
+    // Check if project_labels table exists, create if not
+    const [projectLabelTables] = await pool.execute(
+      `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES 
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'project_labels'`
+    );
+
+    if (projectLabelTables.length === 0) {
+      console.log('📦 Running migration: Creating project_labels table...');
+      await pool.execute(`
+        CREATE TABLE IF NOT EXISTS project_labels (
+          id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+          company_id INT UNSIGNED NOT NULL,
+          name VARCHAR(100) NOT NULL,
+          color VARCHAR(20) DEFAULT '#3b82f6',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          is_deleted TINYINT(1) DEFAULT 0,
+          INDEX (company_id),
+          FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+        )
+      `);
+      console.log('✅ Migration completed: project_labels table created');
+
+      // Seed some default project labels
+      console.log('📦 Seeding default project labels...');
+      const defaults = [
+        ['High Priority', '#ef4444'],
+        ['On track', '#22c55e'],
+        ['Urgent', '#f59e0b'],
+        ['At risk', '#dc2626'],
+        ['Complete', '#3b82f6']
+      ];
+      // Note: company_id 1 is usually the default. In a real scenario we might need to seed for all companies.
+      for (const [name, color] of defaults) {
+        await pool.execute('INSERT INTO project_labels (company_id, name, color) VALUES (1, ?, ?)', [name, color]);
+      }
+    }
+
+    try {
+      const [clientLabelColorCol] = await pool.execute(
+        `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'client_labels' AND COLUMN_NAME = 'color'`
+      );
+
+      if (clientLabelColorCol.length === 0) {
+        console.log('📦 Running migration: Adding color to client_labels table...');
+        await pool.execute(`ALTER TABLE client_labels ADD COLUMN color VARCHAR(20) NULL AFTER label`);
+        console.log('✅ Migration completed: color column added to client_labels');
+      }
+    } catch (err) {
+      console.log('⚠️ Could not add color to client_labels:', err.message);
+    }
+
+    try {
+      const [projectLabelsTables] = await pool.execute(
+        `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES 
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'project_labels'`
+      );
+
+      if (projectLabelsTables.length === 0) {
+        console.log('📦 Running migration: Creating project_labels table...');
+        await pool.query(
+          `CREATE TABLE IF NOT EXISTS project_labels (
+            id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            company_id INT UNSIGNED NOT NULL,
+            label VARCHAR(100) NOT NULL,
+            color VARCHAR(20) NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            is_deleted TINYINT(1) NOT NULL DEFAULT 0,
+            PRIMARY KEY (id),
+            UNIQUE KEY unique_company_label (company_id, label),
+            INDEX idx_company_id (company_id),
+            INDEX idx_label (label),
+            INDEX idx_is_deleted (is_deleted),
+            FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+        );
+        console.log('✅ Migration completed: project_labels table created');
+      }
+    } catch (err) {
+      console.log('⚠️ Could not create project_labels table:', err.message);
+    }
+
+    // Attendance table migration
+    try {
+      const [attendanceTable] = await pool.execute(
+        `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES 
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'attendance'`
+      );
+
+      if (attendanceTable.length === 0) {
+        console.log('📦 Running migration: Creating attendance table...');
+        await pool.query(`
+          CREATE TABLE IF NOT EXISTS attendance (
+            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            company_id INT UNSIGNED NOT NULL,
+            employee_id INT UNSIGNED NOT NULL,
+            user_id INT UNSIGNED NOT NULL,
+            date DATE NOT NULL,
+            status ENUM('present', 'absent', 'half_day', 'late', 'on_leave', 'holiday', 'day_off') DEFAULT 'present',
+            clock_in TIME NULL,
+            clock_out TIME NULL,
+            late_reason TEXT NULL,
+            work_from ENUM('office', 'home', 'other') DEFAULT 'office',
+            notes TEXT NULL,
+            marked_by INT UNSIGNED NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            is_deleted TINYINT(1) DEFAULT 0,
+            UNIQUE KEY unique_employee_date (employee_id, date),
+            INDEX idx_attendance_company (company_id),
+            INDEX idx_attendance_employee (employee_id),
+            INDEX idx_attendance_date (date),
+            INDEX idx_attendance_status (status),
+            INDEX idx_attendance_deleted (is_deleted)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        `);
+        console.log('✅ Migration completed: attendance table created');
+      }
+    } catch (err) {
+      console.log('⚠️ Could not create attendance table:', err.message);
     }
 
   } catch (error) {
@@ -488,6 +623,155 @@ pool.getConnection()
       console.error('⚠️ Migration error (non-fatal, server will continue):', migrationError.message);
       console.error('Migration error stack:', migrationError.stack);
       // Don't throw - allow server to start even if migrations fail
+    }
+
+    try {
+      // ---------------------------------------------------------
+      // Migration: Add new fields to employees and users tables
+      // ---------------------------------------------------------
+
+      // 1. users table
+      const usersColumns = [
+        { name: 'country', type: 'VARCHAR(100) NULL' },
+        { name: 'email_notifications', type: 'TINYINT(1) DEFAULT 1' },
+      ];
+
+      for (const col of usersColumns) {
+        const [check] = await pool.execute(
+          `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+           WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = ?`,
+          [col.name]
+        );
+        if (check.length === 0) {
+          console.log(`📦 Running migration: Adding ${col.name} to users table...`);
+          await pool.execute(`ALTER TABLE users ADD COLUMN ${col.name} ${col.type}`);
+          console.log(`✅ Migration completed: ${col.name} added to users`);
+        }
+      }
+
+      // 2. employees table
+      const employeesColumns = [
+        { name: 'salutation', type: 'VARCHAR(20) NULL' },
+        { name: 'date_of_birth', type: 'DATE NULL' },
+        { name: 'gender', type: "ENUM('Male', 'Female', 'Other') DEFAULT 'Male'" },
+        { name: 'reporting_to', type: 'INT UNSIGNED NULL' },
+        { name: 'language', type: "VARCHAR(50) DEFAULT 'en'" },
+        { name: 'about', type: 'TEXT NULL' },
+        { name: 'hourly_rate', type: 'DECIMAL(10, 2) NULL' },
+        { name: 'slack_member_id', type: 'VARCHAR(100) NULL' },
+        { name: 'skills', type: 'TEXT NULL' },
+        { name: 'probation_end_date', type: 'DATE NULL' },
+        { name: 'notice_period_start_date', type: 'DATE NULL' },
+        { name: 'notice_period_end_date', type: 'DATE NULL' },
+        { name: 'employment_type', type: "ENUM('Full Time', 'Part Time', 'Contract', 'Internship', 'Trainee') DEFAULT 'Full Time'" },
+        { name: 'marital_status', type: "ENUM('Single', 'Married', 'Widowed', 'Divorced', 'Separated') DEFAULT 'Single'" },
+        { name: 'business_address', type: 'TEXT NULL' },
+      ];
+
+      for (const col of employeesColumns) {
+        const [check] = await pool.execute(
+          `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+           WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'employees' AND COLUMN_NAME = ?`,
+          [col.name]
+        );
+        if (check.length === 0) {
+          console.log(`📦 Running migration: Adding ${col.name} to employees table...`);
+          await pool.execute(`ALTER TABLE employees ADD COLUMN ${col.name} ${col.type}`);
+          console.log(`✅ Migration completed: ${col.name} added to employees`);
+
+          if (col.name === 'reporting_to') {
+            // Add FK
+            try {
+              await pool.execute(
+                `ALTER TABLE employees ADD CONSTRAINT employees_reporting_to_fk 
+                 FOREIGN KEY (reporting_to) REFERENCES users(id) ON DELETE SET NULL`
+              );
+              console.log('   Added foreign key constraint for reporting_to');
+            } catch (fkErr) {
+              console.log('   Note: Could not add foreign key for reporting_to:', fkErr.message);
+            }
+          }
+        }
+      }
+
+      // Attendance table migration
+      try {
+        const [attendanceTable] = await pool.execute(
+          `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES 
+           WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'attendance'`
+        );
+
+        if (attendanceTable.length === 0) {
+          console.log('📦 Running migration: Creating attendance table...');
+          await pool.query(`
+            CREATE TABLE IF NOT EXISTS attendance (
+              id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+              company_id INT UNSIGNED NOT NULL,
+              employee_id INT UNSIGNED NOT NULL,
+              user_id INT UNSIGNED NOT NULL,
+              date DATE NOT NULL,
+              status ENUM('present', 'absent', 'half_day', 'late', 'on_leave', 'holiday', 'day_off') DEFAULT 'present',
+              clock_in TIME NULL,
+              clock_out TIME NULL,
+              late_reason TEXT NULL,
+              work_from ENUM('office', 'home', 'other') DEFAULT 'office',
+              notes TEXT NULL,
+              marked_by INT UNSIGNED NULL,
+              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+              is_deleted TINYINT(1) DEFAULT 0,
+              UNIQUE KEY unique_employee_date (employee_id, date),
+              INDEX idx_attendance_company (company_id),
+              INDEX idx_attendance_employee (employee_id),
+              INDEX idx_attendance_date (date),
+              INDEX idx_attendance_status (status),
+              INDEX idx_attendance_deleted (is_deleted)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+          `);
+          console.log('✅ Migration completed: attendance table created');
+        } else {
+          console.log('✅ attendance table already exists');
+
+          // Check and add missing columns
+          const attendanceColumns = [
+            { name: 'company_id', type: 'INT UNSIGNED NOT NULL' },
+            { name: 'employee_id', type: 'INT UNSIGNED NOT NULL' },
+            { name: 'user_id', type: 'INT UNSIGNED NOT NULL' },
+            { name: 'date', type: 'DATE NOT NULL' },
+            { name: 'status', type: "ENUM('present', 'absent', 'half_day', 'late', 'on_leave', 'holiday', 'day_off') DEFAULT 'present'" },
+            { name: 'clock_in', type: 'TIME NULL' },
+            { name: 'clock_out', type: 'TIME NULL' },
+            { name: 'late_reason', type: 'TEXT NULL' },
+            { name: 'work_from', type: "ENUM('office', 'home', 'other') DEFAULT 'office'" },
+            { name: 'notes', type: 'TEXT NULL' },
+            { name: 'marked_by', type: 'INT UNSIGNED NULL' },
+            { name: 'is_deleted', type: 'TINYINT(1) DEFAULT 0' }
+          ];
+
+          for (const col of attendanceColumns) {
+            try {
+              const [colCheck] = await pool.execute(
+                `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+                 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'attendance' AND COLUMN_NAME = ?`,
+                [col.name]
+              );
+
+              if (colCheck.length === 0) {
+                console.log(`📦 Adding column ${col.name} to attendance table...`);
+                await pool.execute(`ALTER TABLE attendance ADD COLUMN ${col.name} ${col.type}`);
+                console.log(`✅ Column ${col.name} added to attendance table`);
+              }
+            } catch (colErr) {
+              console.log(`⚠️ Could not add column ${col.name} to attendance:`, colErr.message);
+            }
+          }
+        }
+      } catch (attErr) {
+        console.log('⚠️ Could not create attendance table:', attErr.message);
+      }
+
+    } catch (migErr) {
+      console.error('⚠️ Detailed migration error:', migErr);
     }
   })
   .catch(err => {
