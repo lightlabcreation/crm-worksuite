@@ -68,6 +68,7 @@ app.use(
       process.env.FRONTEND_URL,
       "http://localhost:5173",
       "https://crm-update.netlify.app",
+      "https://crm-worksuit.netlify.app"
      
     ],
     credentials: true
