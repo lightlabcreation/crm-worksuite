@@ -4,7 +4,7 @@ const getAll = async (req, res) => {
   try {
     const { year, month, start_date, end_date, lead_id, user_id, client_id, for_employee, for_client } = req.query;
     const companyId = req.query.company_id || req.body.company_id || 1;
-    
+
     // No pagination - return all events
     let whereClause = 'WHERE e.is_deleted = 0';
     const params = [];
@@ -92,15 +92,15 @@ const getAll = async (req, res) => {
     }
 
     console.log(`Fetched ${events.length} events for company ${companyId}, year ${year || 'all'}, month ${month || 'all'}`);
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       data: events
     });
   } catch (error) {
     console.error('Get events error:', error);
     console.error('Error stack:', error.stack);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       error: 'Failed to fetch events',
       details: process.env.NODE_ENV !== 'production' ? error.message : undefined
     });
@@ -186,10 +186,10 @@ const create = async (req, res) => {
 
     // Determine host_id - must be a valid numeric user ID
     let validHostId = null;
-    
+
     // Try to get host_id from various sources
     const rawHostId = host_id || host;
-    
+
     // If host_id is provided and is a valid number, validate it
     if (rawHostId && !isNaN(parseInt(rawHostId))) {
       const numericHostId = parseInt(rawHostId);
@@ -203,7 +203,7 @@ const create = async (req, res) => {
         console.warn(`host_id ${numericHostId} not found in company ${companyId}, will use userId as fallback`);
       }
     }
-    
+
     // Fallback to userId if host_id is not valid
     if (!validHostId && userId && !isNaN(parseInt(userId))) {
       const numericUserId = parseInt(userId);
@@ -215,23 +215,24 @@ const create = async (req, res) => {
         validHostId = numericUserId;
       }
     }
-    
+
     // Final hostId to use (can be null if no valid user found)
     const hostId = validHostId;
 
     // Get created_by - must not be null
     const effectiveCreatedBy = userId || req.userId || req.user?.id || 1;
-    
+
     // Insert event - use NULL if hostId is not provided or invalid
     // Note: lead_id column requires database migration to be run first
     const [result] = await connection.execute(
       `INSERT INTO events (
-        company_id, event_name, label_color, \`where\`, description,
+        company_id, lead_id, event_name, label_color, \`where\`, description,
         starts_on_date, starts_on_time, ends_on_date, ends_on_time,
         host_id, status, event_link, created_by
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         companyId,
+        leadId || null,
         eventName,
         labelColor,
         location || null,
@@ -289,9 +290,9 @@ const create = async (req, res) => {
           })
           .filter(id => id !== null && !isNaN(id) && id > 0 && isFinite(id));
       }
-      
+
       const employeesToAdd = [...new Set(employeesArray)];
-      
+
       // If creator is employee and not already in list, add them (only if valid)
       const numericUserId = userId ? parseInt(userId) : null;
       if (numericUserId && !isNaN(numericUserId) && numericUserId > 0) {
@@ -313,7 +314,7 @@ const create = async (req, res) => {
           }
         }
       }
-      
+
       // Validate and filter valid employee IDs - double check before insert
       const validEmployeeIds = [];
       for (const empId of employeesToAdd) {
@@ -337,7 +338,7 @@ const create = async (req, res) => {
           console.warn(`Skipping invalid employee_id format: ${empId}`);
         }
       }
-      
+
       // Insert only valid employees with additional safety check
       if (validEmployeeIds.length > 0) {
         for (const empId of validEmployeeIds) {
@@ -347,12 +348,12 @@ const create = async (req, res) => {
               `SELECT id FROM users WHERE id = ? AND is_deleted = 0`,
               [empId]
             );
-            
+
             if (finalCheck.length === 0) {
               console.warn(`Final check failed for employee_id ${empId} - skipping insert`);
               continue;
             }
-            
+
             await connection.execute(
               'INSERT INTO event_employees (event_id, user_id) VALUES (?, ?)',
               [eventId, empId]
@@ -421,7 +422,7 @@ const getById = async (req, res) => {
   try {
     const { id } = req.params;
     const companyId = req.query.company_id || req.body.company_id || req.companyId;
-    
+
     if (!companyId) {
       return res.status(400).json({
         success: false,
@@ -656,7 +657,7 @@ const update = async (req, res) => {
             }
           }
         }
-        
+
         // Insert only valid employees
         for (const empId of validEmployeeIds) {
           try {
@@ -760,7 +761,7 @@ const getUpcoming = async (req, res) => {
     const companyId = req.query.company_id || req.companyId;
     const userId = req.query.user_id || req.userId;
     const limit = parseInt(req.query.limit) || 5;
-    
+
     if (!companyId) {
       return res.status(400).json({
         success: false,

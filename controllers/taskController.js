@@ -43,6 +43,110 @@ const generateTaskCode = async (projectId, companyId) => {
  * Get all tasks
  * GET /api/v1/tasks
  */
+
+/**
+ * Check and generate recurring tasks
+ */
+const checkRecurrence = async (companyId) => {
+  try {
+    // 1. Get all recurring task templates
+    const [templates] = await pool.execute(
+      `SELECT * FROM tasks WHERE company_id = ? AND is_recurring = 1 AND is_deleted = 0`,
+      [companyId]
+    );
+
+    for (const template of templates) {
+      if (!template.recurring_frequency) continue;
+
+      // 2. Find the last executed task (including the template itself)
+      const [lastTaskResult] = await pool.execute(
+        `SELECT * FROM tasks 
+         WHERE title = ? AND company_id = ?
+         ORDER BY start_date DESC LIMIT 1`,
+        [template.title, companyId]
+      );
+
+      const lastTask = lastTaskResult[0] || template;
+      if (!lastTask.start_date) continue; // Skip if no start date to calculate from
+
+      const lastDate = new Date(lastTask.start_date);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0); // Normalize to start of day
+
+      // 3. Calculate next run date
+      let nextDate = new Date(lastDate);
+      const freq = template.recurring_frequency;
+
+      if (freq === 'daily') {
+        nextDate.setDate(nextDate.getDate() + 1);
+      } else if (freq === 'weekly') {
+        nextDate.setDate(nextDate.getDate() + 7);
+      } else if (freq === 'bi-weekly') {
+        nextDate.setDate(nextDate.getDate() + 14);
+      } else if (freq === 'monthly') {
+        nextDate.setMonth(nextDate.getMonth() + 1);
+      } else if (freq === 'quarterly') {
+        nextDate.setMonth(nextDate.getMonth() + 3);
+      } else if (freq === 'yearly') {
+        nextDate.setFullYear(nextDate.getFullYear() + 1);
+      } else if (freq.startsWith('custom_')) {
+        const days = parseInt(freq.replace('custom_', '')) || 1;
+        nextDate.setDate(nextDate.getDate() + days);
+      }
+
+      // Normalize nextDate
+      nextDate.setHours(0, 0, 0, 0);
+
+      // 4. If next date is today or in the past, create the task
+      if (nextDate <= today && nextDate > lastDate) {
+        // Calculate due date offset
+        let deadline = null;
+        if (template.due_date && template.start_date) {
+          const originalStart = new Date(template.start_date);
+          const originalDue = new Date(template.due_date);
+          const duration = originalDue - originalStart;
+          deadline = new Date(nextDate.getTime() + duration);
+        }
+
+        const taskCode = await generateTaskCode(template.project_id, companyId);
+
+        const [result] = await pool.execute(
+          `INSERT INTO tasks (
+            company_id, code, title, description, sub_description, task_category,
+            project_id, client_id, lead_id, start_date, due_date,
+            status, priority, estimated_time, created_by, is_recurring, recurring_frequency
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Incomplete', ?, ?, ?, 0, null)`,
+          [
+            companyId, taskCode, template.title, template.description, template.sub_description, template.task_category,
+            template.project_id, template.client_id, template.lead_id, nextDate, deadline,
+            template.priority, template.estimated_time, template.created_by
+          ]
+        );
+
+        const newTaskId = result.insertId;
+
+        // Copy Assignees
+        const [assignees] = await pool.execute('SELECT user_id FROM task_assignees WHERE task_id = ?', [template.id]);
+        if (assignees.length > 0) {
+          const assigneeValues = assignees.map(a => [newTaskId, a.user_id]);
+          await pool.query('INSERT INTO task_assignees (task_id, user_id) VALUES ?', [assigneeValues]);
+        }
+
+        // Copy Tags
+        const [tags] = await pool.execute('SELECT tag FROM task_tags WHERE task_id = ?', [template.id]);
+        if (tags.length > 0) {
+          const tagValues = tags.map(t => [newTaskId, t.tag]);
+          await pool.query('INSERT INTO task_tags (task_id, tag) VALUES ?', [tagValues]);
+        }
+
+        console.log(`Generated recurring task: ${template.title} for date ${nextDate.toISOString()}`);
+      }
+    }
+  } catch (error) {
+    console.error('Error checking recurrence:', error);
+  }
+};
+
 const getAll = async (req, res) => {
   try {
     const { status, project_id, assigned_to, due_date, start_date, priority, search } = req.query;
@@ -59,6 +163,9 @@ const getAll = async (req, res) => {
 
     let whereClause = 'WHERE t.company_id = ? AND t.is_deleted = 0';
     const params = [filterCompanyId];
+
+    // Check for recurring tasks to generate
+    await checkRecurrence(filterCompanyId);
 
     if (status) {
       whereClause += ' AND t.status = ?';

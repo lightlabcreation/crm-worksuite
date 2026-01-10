@@ -29,7 +29,7 @@ const runMigration = async () => {
 
     // Step 2: Insert default settings
     console.log('📝 Inserting default settings...');
-    
+
     const defaultSettings = [
       // General Settings
       ['company_name', 'My Company'],

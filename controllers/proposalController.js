@@ -303,9 +303,8 @@ const getById = async (req, res) => {
 const create = async (req, res) => {
   try {
     const {
-      valid_till, currency, client_id, project_id, lead_id,
-      calculate_tax, description, note, terms,
-      discount, discount_type, items = [], status, title
+      proposal_date, valid_till, client_id, tax, second_tax, note,
+      currency, status
     } = req.body;
 
     // No required validation - save whatever data is provided
@@ -315,30 +314,6 @@ const create = async (req, res) => {
 
     // Get created_by from various sources - body, query, req.userId, or default to 1 (admin)
     const effectiveCreatedBy = req.body.user_id || req.query.user_id || req.userId || req.user?.id || 1;
-
-    // Calculate totals from items
-    let totals;
-    if (items && items.length > 0) {
-      totals = calculateTotals(items, discount || 0, discount_type || '%');
-    } else {
-      // If no items, use provided totals or defaults
-      const providedTotal = parseFloat(req.body.total || req.body.amount || 0);
-      const providedSubTotal = parseFloat(req.body.sub_total || req.body.amount || 0);
-
-      let discountAmount = 0;
-      if (discount_type === '%') {
-        discountAmount = (providedSubTotal * parseFloat(discount || 0)) / 100;
-      } else {
-        discountAmount = parseFloat(discount || 0);
-      }
-
-      totals = {
-        sub_total: providedSubTotal,
-        discount_amount: discountAmount,
-        tax_amount: 0,
-        total: providedTotal || (providedSubTotal - discountAmount)
-      };
-    }
 
     // Map status: 'sent' -> 'Sent', 'draft' -> 'Draft', etc.
     let mappedStatus = 'Draft';
@@ -354,70 +329,29 @@ const create = async (req, res) => {
     // Convert all undefined/empty values to null explicitly
     const [result] = await pool.execute(
       `INSERT INTO estimates (
-        company_id, estimate_number, valid_till, currency, client_id, project_id, lead_id,
-        calculate_tax, description, note, terms, discount, discount_type,
-        sub_total, discount_amount, tax_amount, total, status, created_by
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        company_id, estimate_number, proposal_date, valid_till, currency, client_id,
+        tax, second_tax, note, sub_total, discount_amount, tax_amount, total, status, created_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         companyId || null,
         proposal_number || null,
+        (proposal_date && proposal_date !== '') ? proposal_date : null,
         (valid_till && valid_till !== '') ? valid_till : null,
         (currency && currency !== '') ? currency : 'USD',
         (client_id && client_id !== '') ? client_id : null,
-        (project_id && project_id !== '') ? project_id : null,
-        (lead_id && lead_id !== '') ? lead_id : null,
-        (calculate_tax && calculate_tax !== '') ? calculate_tax : 'After Discount',
-        (description && description !== '') ? description : null,
+        (tax && tax !== '') ? tax : null,
+        (second_tax && second_tax !== '') ? second_tax : null,
         (note && note !== '') ? note : null,
-        (terms && terms !== '') ? terms : 'Thank you for your business.',
-        (discount !== undefined && discount !== null && discount !== '') ? parseFloat(discount) : 0,
-        (discount_type && discount_type !== '') ? discount_type : '%',
-        totals.sub_total || 0,
-        totals.discount_amount || 0,
-        totals.tax_amount || 0,
-        totals.total || 0,
+        0, // sub_total
+        0, // discount_amount
+        0, // tax_amount
+        0, // total
         mappedStatus || 'Draft',
         effectiveCreatedBy || 1
       ]
     );
 
     const proposalId = result.insertId;
-
-    // Insert proposal items
-    if (items && items.length > 0) {
-      const itemValues = items.map(item => {
-        const quantity = parseFloat(item.quantity) || 1;
-        const unitPrice = parseFloat(item.unit_price) || 0;
-        const taxRate = parseFloat(item.tax_rate) || 0;
-
-        // Calculate amount if not provided
-        let amount = parseFloat(item.amount) || 0;
-        if (!amount && (quantity > 0 || unitPrice > 0)) {
-          const subtotal = quantity * unitPrice;
-          amount = subtotal + (subtotal * taxRate / 100);
-        }
-
-        return [
-          proposalId,
-          item.item_name || '',
-          item.description || null,
-          quantity,
-          item.unit || 'Pcs',
-          unitPrice,
-          item.tax || null,
-          taxRate,
-          item.file_path || null,
-          amount
-        ];
-      });
-
-      await pool.query(
-        `INSERT INTO estimate_items (
-          estimate_id, item_name, description, quantity, unit, unit_price, tax, tax_rate, file_path, amount
-        ) VALUES ?`,
-        [itemValues]
-      );
-    }
 
     // Fetch the created proposal with relations
     const [proposals] = await pool.execute(
@@ -431,11 +365,6 @@ const create = async (req, res) => {
     );
 
     const proposal = proposals[0];
-    const [itemsData] = await pool.execute(
-      `SELECT * FROM estimate_items WHERE estimate_id = ?`,
-      [proposalId]
-    );
-    proposal.items = itemsData;
 
     res.status(201).json({ success: true, data: proposal });
   } catch (error) {
@@ -451,9 +380,8 @@ const update = async (req, res) => {
   try {
     const { id } = req.params;
     const {
-      valid_till, currency, client_id, project_id,
-      calculate_tax, description, note, terms,
-      discount, discount_type, items = [], status
+      proposal_date, valid_till, client_id, tax, second_tax, note,
+      currency, status
     } = req.body;
 
     // Check if proposal exists
@@ -464,12 +392,6 @@ const update = async (req, res) => {
 
     if (existing.length === 0) {
       return res.status(404).json({ success: false, error: 'Proposal not found' });
-    }
-
-    // Calculate totals if items are provided
-    let totals = { sub_total: 0, discount_amount: 0, tax_amount: 0, total: 0 };
-    if (items && items.length > 0) {
-      totals = calculateTotals(items, discount || 0, discount_type || '%');
     }
 
     // Map status
@@ -486,6 +408,10 @@ const update = async (req, res) => {
     const updateFields = [];
     const updateValues = [];
 
+    if (proposal_date !== undefined) {
+      updateFields.push('proposal_date = ?');
+      updateValues.push(proposal_date);
+    }
     if (valid_till !== undefined) {
       updateFields.push('valid_till = ?');
       updateValues.push(valid_till);
@@ -498,63 +424,21 @@ const update = async (req, res) => {
       updateFields.push('client_id = ?');
       updateValues.push(client_id);
     }
-    if (project_id !== undefined) {
-      updateFields.push('project_id = ?');
-      updateValues.push(project_id ?? null);
+    if (tax !== undefined) {
+      updateFields.push('tax = ?');
+      updateValues.push(tax);
     }
-    if (calculate_tax !== undefined) {
-      updateFields.push('calculate_tax = ?');
-      updateValues.push(calculate_tax);
-    }
-    if (description !== undefined) {
-      updateFields.push('description = ?');
-      updateValues.push(description);
+    if (second_tax !== undefined) {
+      updateFields.push('second_tax = ?');
+      updateValues.push(second_tax);
     }
     if (note !== undefined) {
       updateFields.push('note = ?');
       updateValues.push(note);
     }
-    if (terms !== undefined) {
-      updateFields.push('terms = ?');
-      updateValues.push(terms);
-    }
-    if (discount !== undefined) {
-      updateFields.push('discount = ?');
-      updateValues.push(discount);
-    }
-    if (discount_type !== undefined) {
-      updateFields.push('discount_type = ?');
-      updateValues.push(discount_type);
-    }
     if (mappedStatus !== null) {
       updateFields.push('status = ?');
       updateValues.push(mappedStatus);
-    }
-    if (items && items.length > 0) {
-      updateFields.push('sub_total = ?');
-      updateFields.push('discount_amount = ?');
-      updateFields.push('tax_amount = ?');
-      updateFields.push('total = ?');
-      updateValues.push(totals.sub_total, totals.discount_amount, totals.tax_amount, totals.total);
-    } else if (req.body.amount !== undefined || req.body.total !== undefined || req.body.sub_total !== undefined) {
-      // If items are NOT updated but amount is updated directly
-      const providedTotal = parseFloat(req.body.total || req.body.amount || 0);
-      const providedSubTotal = parseFloat(req.body.sub_total || req.body.amount || 0);
-
-      let discountAmount = 0;
-      const discountVal = req.body.discount !== undefined ? req.body.discount : 0;
-      const discountType = req.body.discount_type || '%';
-
-      if (discountType === '%') {
-        discountAmount = (providedSubTotal * parseFloat(discountVal)) / 100;
-      } else {
-        discountAmount = parseFloat(discountVal);
-      }
-
-      updateFields.push('sub_total = ?');
-      updateFields.push('discount_amount = ?');
-      updateFields.push('total = ?');
-      updateValues.push(providedSubTotal, discountAmount, providedTotal || (providedSubTotal - discountAmount));
     }
 
     updateFields.push('updated_at = CURRENT_TIMESTAMP');
@@ -564,46 +448,6 @@ const update = async (req, res) => {
       `UPDATE estimates SET ${updateFields.join(', ')} WHERE id = ?`,
       updateValues
     );
-
-    // Update items if provided
-    if (items && items.length > 0) {
-      // Delete existing items
-      await pool.execute(`DELETE FROM estimate_items WHERE estimate_id = ?`, [id]);
-
-      // Insert new items
-      const itemValues = items.map(item => {
-        const quantity = parseFloat(item.quantity) || 1;
-        const unitPrice = parseFloat(item.unit_price) || 0;
-        const taxRate = parseFloat(item.tax_rate) || 0;
-
-        // Calculate amount if not provided
-        let amount = parseFloat(item.amount) || 0;
-        if (!amount && (quantity > 0 || unitPrice > 0)) {
-          const subtotal = quantity * unitPrice;
-          amount = subtotal + (subtotal * taxRate / 100);
-        }
-
-        return [
-          id,
-          item.item_name || '',
-          item.description || null,
-          quantity,
-          item.unit || 'Pcs',
-          unitPrice,
-          item.tax || null,
-          taxRate,
-          item.file_path || null,
-          amount
-        ];
-      });
-
-      await pool.query(
-        `INSERT INTO estimate_items (
-          estimate_id, item_name, description, quantity, unit, unit_price, tax, tax_rate, file_path, amount
-        ) VALUES ?`,
-        [itemValues]
-      );
-    }
 
     // Fetch updated proposal
     const [proposals] = await pool.execute(
@@ -617,11 +461,6 @@ const update = async (req, res) => {
     );
 
     const proposal = proposals[0];
-    const [itemsData] = await pool.execute(
-      `SELECT * FROM estimate_items WHERE estimate_id = ?`,
-      [id]
-    );
-    proposal.items = itemsData;
 
     res.json({ success: true, data: proposal });
   } catch (error) {

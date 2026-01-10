@@ -117,6 +117,21 @@ const sanitizeInteger = (intValue) => {
  * Get all leads
  * GET /api/v1/leads
  */
+// Helper to replace nulls with empty strings/zeros
+const sanitizeLead = (lead) => {
+  const sanitized = { ...lead };
+  // String fields
+  ['company_name', 'person_name', 'email', 'phone', 'address', 'city', 'state', 'zip', 'country', 'notes'].forEach(field => {
+    if (sanitized[field] === null) sanitized[field] = '';
+  });
+  // Numeric/Date fields (keep dates null if really no date? User complained about nulls generally)
+  // Let's keep dates as null if empty, but probability/value as 0
+  if (sanitized.value === null) sanitized.value = '0.00';
+  if (sanitized.probability === null) sanitized.probability = 0;
+
+  return sanitized;
+};
+
 const getAll = async (req, res) => {
   try {
     const { status, owner_id, source, city } = req.query;
@@ -161,17 +176,18 @@ const getAll = async (req, res) => {
     );
 
     // Get labels for each lead
-    for (let lead of leads) {
+    const leadsWithLabels = await Promise.all(leads.map(async (lead) => {
       const [labels] = await pool.execute(
         `SELECT label FROM lead_labels WHERE lead_id = ?`,
         [lead.id]
       );
-      lead.labels = labels.map(l => l.label);
-    }
+      const leadLabels = labels.map(l => l.label);
+      return sanitizeLead({ ...lead, labels: leadLabels });
+    }));
 
     res.json({
       success: true,
-      data: leads
+      data: leadsWithLabels
     });
   } catch (error) {
     console.error('Get leads error:', error);
@@ -226,7 +242,7 @@ const getById = async (req, res) => {
 
     res.json({
       success: true,
-      data: lead
+      data: sanitizeLead(lead)
     });
   } catch (error) {
     console.error('Get lead error:', error);
@@ -316,17 +332,11 @@ const create = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      data: leads[0],
+      data: sanitizeLead(leads[0]),
       message: 'Lead created successfully'
     });
   } catch (error) {
     console.error('Create lead error:', error);
-    console.error('Error details:', {
-      message: error.message,
-      sqlMessage: error.sqlMessage,
-      code: error.code,
-      errno: error.errno
-    });
     res.status(500).json({
       success: false,
       error: error.sqlMessage || error.message || 'Failed to create lead'
@@ -396,20 +406,15 @@ const update = async (req, res) => {
       }
     }
 
-    if (updates.length === 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'No valid fields to update'
-      });
+    if (updates.length > 0) {
+      updates.push('updated_at = CURRENT_TIMESTAMP');
+      values.push(id, companyId);
+
+      await pool.execute(
+        `UPDATE leads SET ${updates.join(', ')} WHERE id = ? AND company_id = ?`,
+        values
+      );
     }
-
-    updates.push('updated_at = CURRENT_TIMESTAMP');
-    values.push(id, companyId);
-
-    await pool.execute(
-      `UPDATE leads SET ${updates.join(', ')} WHERE id = ? AND company_id = ?`,
-      values
-    );
 
     // Update labels if provided
     if (updateFields.labels) {
@@ -446,18 +451,11 @@ const update = async (req, res) => {
 
     res.json({
       success: true,
-      data: updatedLead,
+      data: sanitizeLead(updatedLead),
       message: 'Lead updated successfully'
     });
   } catch (error) {
     console.error('Update lead error:', error);
-    console.error('Error details:', {
-      message: error.message,
-      sqlMessage: error.sqlMessage,
-      code: error.code,
-      errno: error.errno,
-      stack: error.stack
-    });
     res.status(500).json({
       success: false,
       error: error.sqlMessage || error.message || 'Failed to update lead'
@@ -1378,9 +1376,34 @@ const getAllLabels = async (req, res) => {
       });
     }
 
-    // Get all unique labels from leads in this company
+    // First try to get from label definitions (with colors)
+    const [definitions] = await pool.execute(
+      `SELECT id, name, color, created_at
+       FROM lead_label_definitions
+       WHERE company_id = ?
+       ORDER BY name ASC`,
+      [companyId]
+    );
+
+    if (definitions.length > 0) {
+      // Return definitions with name as label for consistency
+      const labelsWithColors = definitions.map(d => ({
+        id: d.id,
+        label: d.name,
+        name: d.name,
+        color: d.color || '#22c55e',
+        created_at: d.created_at
+      }));
+
+      return res.json({
+        success: true,
+        data: labelsWithColors
+      });
+    }
+
+    // Fallback: Get all unique labels from leads in this company
     const [labels] = await pool.execute(
-      `SELECT DISTINCT ll.label, ll.id, ll.created_at
+      `SELECT DISTINCT ll.label, ll.id, ll.color, ll.created_at
        FROM lead_labels ll
        INNER JOIN leads l ON ll.lead_id = l.id
        WHERE l.company_id = ? AND l.is_deleted = 0
@@ -1388,9 +1411,16 @@ const getAllLabels = async (req, res) => {
       [companyId]
     );
 
+    // Return with name field for consistency
+    const labelsWithName = labels.map(l => ({
+      ...l,
+      name: l.label,
+      color: l.color || '#22c55e'
+    }));
+
     res.json({
       success: true,
-      data: labels
+      data: labelsWithName
     });
   } catch (error) {
     console.error('Get labels error:', error);
@@ -1407,7 +1437,7 @@ const getAllLabels = async (req, res) => {
  */
 const createLabel = async (req, res) => {
   try {
-    const { label, lead_id } = req.body;
+    const { label, color, lead_id } = req.body;
     const companyId = req.query.company_id || req.body.company_id || req.companyId;
 
     if (!label) {
@@ -1424,7 +1454,29 @@ const createLabel = async (req, res) => {
       });
     }
 
-    // If lead_id is provided, add label to that lead
+    // Identify if this is a request to add label to a lead OR create a global label definition
+
+    // 1. Create/Ensure label definition exists
+    // Even if lead_id is provided, we should ensure the label definition exists (for color consistency)
+    try {
+      await pool.execute(
+        `INSERT IGNORE INTO lead_label_definitions (company_id, name, color) VALUES (?, ?, ?)`,
+        [companyId, label, color || '#22c55e']
+      );
+
+      // If color is updated for existing label?
+      if (color) {
+        await pool.execute(
+          `UPDATE lead_label_definitions SET color = ? WHERE company_id = ? AND name = ?`,
+          [color, companyId, label]
+        );
+      }
+    } catch (err) {
+      console.error('Error creating label definition:', err);
+      // Continue, as we might just want to assign it to a lead
+    }
+
+    // 2. If lead_id is provided, add label to that lead
     if (lead_id) {
       // Check if lead exists and belongs to company
       const [leads] = await pool.execute(
@@ -1457,12 +1509,23 @@ const createLabel = async (req, res) => {
         `INSERT INTO lead_labels (lead_id, label) VALUES (?, ?)`,
         [lead_id, label]
       );
+
+      // Also update color in lead_labels table (for backward compatibility if needed, though we rely on definitions mostly now)
+      // The migration added `color` column to `lead_labels` as well.
+      if (color) {
+        try {
+          await pool.execute(
+            `UPDATE lead_labels SET color = ? WHERE lead_id = ? AND label = ?`,
+            [color, lead_id, label]
+          );
+        } catch (e) { /* ignore */ }
+      }
     }
 
     res.json({
       success: true,
       message: 'Label created successfully',
-      data: { label }
+      data: { label, color }
     });
   } catch (error) {
     console.error('Create label error:', error);

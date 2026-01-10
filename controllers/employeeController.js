@@ -249,16 +249,20 @@ const getById = async (req, res) => {
 
     const [employees] = await pool.execute(
       `SELECT e.*, 
-              u.name, u.email, u.phone, u.address, u.country, u.email_notifications, u.role as user_role, u.status,
+              u.name, u.email, u.phone, u.address, u.country, u.email_notifications, u.role as user_role, u.status, u.avatar,
               u.company_id,
               c.name as company_name,
               d.name as department_name, 
-              p.name as position_name
+              p.name as position_name,
+              s.shift_name,
+              u2.name as reporting_to_name
        FROM employees e
        JOIN users u ON e.user_id = u.id
        LEFT JOIN companies c ON u.company_id = c.id
        LEFT JOIN departments d ON e.department_id = d.id
        LEFT JOIN positions p ON e.position_id = p.id
+       LEFT JOIN shifts s ON e.shift_id = s.id
+       LEFT JOIN users u2 ON e.reporting_to = u2.id
        WHERE e.id = ? AND u.is_deleted = 0`,
       [id]
     );
@@ -423,7 +427,7 @@ const update = async (req, res) => {
         'salutation', 'date_of_birth', 'gender', 'reporting_to', 'language', 'about',
         'hourly_rate', 'slack_member_id', 'skills', 'probation_end_date',
         'notice_period_start_date', 'notice_period_end_date', 'employment_type',
-        'marital_status', 'business_address'
+        'marital_status', 'business_address', 'contract_end_date', 'shift_id'
       ];
 
       newFields.forEach(field => {

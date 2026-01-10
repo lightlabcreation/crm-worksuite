@@ -32,6 +32,8 @@ const messageRoutes = require('./routes/messageRoutes');
 const ticketRoutes = require('./routes/ticketRoutes');
 const customFieldRoutes = require('./routes/customFieldRoutes');
 const settingsRoutes = require('./routes/settingsRoutes');
+const roleRoutes = require('./routes/roleRoutes');
+const hrRoutes = require('./routes/hrRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
 const companyPackageRoutes = require('./routes/companyPackageRoutes');
 const companyRoutes = require('./routes/companyRoutes');
@@ -46,9 +48,11 @@ const bankAccountRoutes = require('./routes/bankAccountRoutes');
 const auditLogRoutes = require('./routes/auditLogRoutes');
 const leaveRequestRoutes = require('./routes/leaveRequestRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
+const pwaRoutes = require('./routes/pwaRoutes');
 const noteRoutes = require('./routes/noteRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const itemRoutes = require('./routes/itemRoutes');
+
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -61,7 +65,7 @@ const API_VERSION = process.env.API_VERSION || 'v1';
 // Security
 app.use(helmet());
 
-// CORS
+// CORS - Allow multiple origins
 app.use(
   cors({
     origin: [
@@ -73,6 +77,9 @@ app.use(
     credentials: true
   })
 );
+
+// Handle preflight requests
+app.options('*', cors());
 
 // Body parser
 app.use(express.json({ limit: '10mb' }));
@@ -86,6 +93,10 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 // Static files (for uploads)
+app.use('/uploads', (req, res, next) => {
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  next();
+});
 app.use('/uploads', express.static('uploads'));
 
 // =====================================================
@@ -94,8 +105,8 @@ app.use('/uploads', express.static('uploads'));
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'OK', 
+  res.json({
+    status: 'OK',
     timestamp: new Date().toISOString(),
     uptime: process.uptime()
   });
@@ -128,6 +139,8 @@ app.use(`${apiBase}/messages`, messageRoutes);
 app.use(`${apiBase}/tickets`, ticketRoutes);
 app.use(`${apiBase}/custom-fields`, customFieldRoutes);
 app.use(`${apiBase}/settings`, settingsRoutes);
+app.use(`${apiBase}/roles`, roleRoutes);
+app.use(`${apiBase}/hr`, hrRoutes);
 app.use(`${apiBase}/company-packages`, companyPackageRoutes);
 app.use(`${apiBase}/companies`, companyRoutes);
 app.use(`${apiBase}/documents`, documentRoutes);
@@ -141,9 +154,13 @@ app.use(`${apiBase}/bank-accounts`, bankAccountRoutes);
 app.use(`${apiBase}/audit-logs`, auditLogRoutes);
 app.use(`${apiBase}/leave-requests`, leaveRequestRoutes);
 app.use(`${apiBase}/notifications`, notificationRoutes);
+// PWA Routes - Must be public for manifest
+app.use(`${apiBase}/pwa`, pwaRoutes);
+app.use(`${apiBase}/notifications`, notificationRoutes);
 app.use(`${apiBase}/notes`, noteRoutes);
 app.use(`${apiBase}/orders`, orderRoutes);
 app.use(`${apiBase}/items`, itemRoutes);
+app.use(`${apiBase}/pwa`, pwaRoutes);
 
 // 404 handler
 app.use((req, res) => {
@@ -156,11 +173,11 @@ app.use((req, res) => {
 // Error handler
 app.use((err, req, res, next) => {
   console.error('Error:', err);
-  
+
   res.status(err.status || 500).json({
     success: false,
-    error: process.env.NODE_ENV === 'production' 
-      ? 'Internal server error' 
+    error: process.env.NODE_ENV === 'production'
+      ? 'Internal server error'
       : err.message,
     ...(process.env.NODE_ENV !== 'production' && { stack: err.stack })
   });
