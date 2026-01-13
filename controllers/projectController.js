@@ -164,6 +164,7 @@ const getAll = async (req, res) => {
       'deadline': 'p.deadline',
       'progress': 'p.progress',
       'budget': 'p.budget',
+      'price': 'p.price',
       'created_at': 'p.created_at',
       'client_name': 'c.company_name',
       'company_name': 'comp.name'
@@ -320,7 +321,7 @@ const create = async (req, res) => {
       company_id, short_code, project_name, description, start_date, deadline, no_deadline,
       budget, project_category, project_sub_category, department_id, client_id,
       project_manager_id, project_summary, notes, public_gantt_chart, public_task_board,
-      task_approval, label, project_members = [], status, progress
+      task_approval, label, project_members = [], status, progress, price
     } = req.body;
 
     // Validate company_id is required
@@ -393,15 +394,15 @@ const create = async (req, res) => {
         company_id, short_code, project_name, description, start_date, deadline, no_deadline,
         budget, project_category, project_sub_category, department_id, client_id,
         project_manager_id, project_summary, notes, public_gantt_chart, public_task_board,
-        task_approval, label, status, progress, created_by
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        task_approval, label, status, progress, created_by, price
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         company_id ?? null, projectShortCode, project_name || null, description || null, projectStartDate, deadline || null,
         no_deadline || 0, budget || null, project_category || null, project_sub_category || null,
         department_id || null, validClientId || null, validManagerId || null, project_summary || null, notes || null,
         public_gantt_chart || 'enable', public_task_board || 'enable',
         task_approval || 'disable', label || null, status || 'not started',
-        progress || 0, createdByUserId || req.userId || req.user?.id || validManagerId || 1
+        progress || 0, createdByUserId || req.userId || req.user?.id || validManagerId || 1, price || budget || 0
       ]
     );
 
@@ -476,7 +477,7 @@ const update = async (req, res) => {
       'company_id', 'project_name', 'description', 'start_date', 'deadline', 'no_deadline',
       'budget', 'project_category', 'project_sub_category', 'department_id', 'client_id',
       'project_manager_id', 'project_summary', 'notes', 'public_gantt_chart', 'public_task_board',
-      'task_approval', 'label', 'status', 'progress'
+      'task_approval', 'label', 'status', 'progress', 'price'
     ];
 
     const updates = [];
@@ -484,8 +485,14 @@ const update = async (req, res) => {
 
     for (const field of allowedFields) {
       if (updateFields.hasOwnProperty(field)) {
+        let value = updateFields[field];
+        // Sanitize date fields
+        if ((field === 'deadline' || field === 'start_date') && value === '') {
+          value = null;
+        }
+
         updates.push(`${field} = ?`);
-        values.push(updateFields[field]);
+        values.push(value);
       }
     }
 

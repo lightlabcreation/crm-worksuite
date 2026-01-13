@@ -54,6 +54,7 @@ const getAll = async (req, res) => {
               COALESCE(u.name, c.company_name) as owner_name, 
               COALESCE(u.email, '') as email,
               comp.name as admin_company_name,
+              c.type,
               (SELECT COUNT(*) FROM projects p WHERE p.client_id = c.id AND p.is_deleted = 0) as total_projects,
               (SELECT COALESCE(SUM(total), 0) FROM invoices i WHERE i.client_id = c.id AND i.is_deleted = 0) as total_invoiced,
               (SELECT COALESCE(SUM(p.amount), 0) 
@@ -82,6 +83,15 @@ const getAll = async (req, res) => {
       // Map labels to have both name and color
       client.labels = labels.map(l => l.label);
       client.labelDetails = labels; // Full details with colors
+    }
+
+    // Get groups for each client
+    for (let client of clients) {
+      const [groups] = await pool.execute(
+        `SELECT group_name FROM client_groups WHERE client_id = ?`,
+        [client.id]
+      );
+      client.groups = groups.map(g => g.group_name);
     }
 
     // Get contacts for each client
@@ -137,6 +147,7 @@ const getById = async (req, res) => {
               COALESCE(u.name, c.company_name) as owner_name, 
               COALESCE(u.email, '') as email,
               comp.name as admin_company_name,
+              c.type,
               (SELECT COUNT(*) FROM projects p WHERE p.client_id = c.id AND p.is_deleted = 0) as total_projects,
               (SELECT COALESCE(SUM(total), 0) FROM invoices i WHERE i.client_id = c.id AND i.is_deleted = 0) as total_invoiced,
               (SELECT COALESCE(SUM(p.amount), 0) 
@@ -166,6 +177,23 @@ const getById = async (req, res) => {
     );
     client.labels = labels.map(l => l.label);
     client.labelDetails = labels;
+
+    // Get groups
+    const [groups] = await pool.execute(
+      `SELECT group_name FROM client_groups WHERE client_id = ?`,
+      [client.id]
+    );
+    client.groups = groups.map(g => g.group_name);
+
+    // Get managers
+    const [managers] = await pool.execute(
+      `SELECT cm.user_id, u.name 
+       FROM client_managers cm
+       JOIN users u ON cm.user_id = u.id
+       WHERE cm.client_id = ?`,
+      [client.id]
+    );
+    client.managers = managers; // Return array of {user_id, name}
 
     // Calculate due amount
     client.due = (parseFloat(client.total_invoiced) || 0) - (parseFloat(client.payment_received) || 0);
@@ -265,13 +293,14 @@ const create = async (req, res) => {
       `INSERT INTO clients (
         company_id, company_name, owner_id, address, city, state, zip, country,
         phone_country_code, phone_number, website, vat_number, gst_number,
-        currency, currency_symbol, disable_online_payment, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        currency, currency_symbol, disable_online_payment, status, type
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         companyId, clientName, ownerId, address, city, state, zip,
         country || 'United States', phone_country_code || '+1', phone_number,
         website, vat_number, gst_number, currency || 'USD',
-        currency_symbol || '$', disable_online_payment || 0, status || 'Active'
+        currency_symbol || '$', disable_online_payment || 0, status || 'Active',
+        req.body.type || 'Organization'
       ]
     );
 
@@ -298,6 +327,24 @@ const create = async (req, res) => {
       await connection.query(
         `INSERT INTO client_labels (client_id, label, color) VALUES ?`,
         [labelValues]
+      );
+    }
+
+    // Save groups if provided
+    if (req.body.client_groups && Array.isArray(req.body.client_groups) && req.body.client_groups.length > 0) {
+      const groupValues = req.body.client_groups.map(group => [clientId, group]);
+      await connection.query(
+        `INSERT INTO client_groups (client_id, group_name) VALUES ?`,
+        [groupValues]
+      );
+    }
+
+    // Save managers if provided (array of user_ids)
+    if (req.body.managers && Array.isArray(req.body.managers) && req.body.managers.length > 0) {
+      const managerValues = req.body.managers.map(userId => [clientId, userId]);
+      await connection.query(
+        `INSERT INTO client_managers (client_id, user_id) VALUES ?`,
+        [managerValues]
       );
     }
 
@@ -386,7 +433,7 @@ const update = async (req, res) => {
     const allowedFields = [
       'company_name', 'owner_id', 'address', 'city', 'state', 'zip', 'country',
       'phone_country_code', 'phone_number', 'website', 'vat_number', 'gst_number',
-      'currency', 'currency_symbol', 'disable_online_payment', 'status'
+      'currency', 'currency_symbol', 'disable_online_payment', 'status', 'type'
     ];
 
     const updates = [];
@@ -437,10 +484,34 @@ const update = async (req, res) => {
         );
 
         const colorMap = new Map(labelColors.map(lc => [lc.label, lc.color]));
-        const labelValues = updateFields.labels.map(lbl => [id, lbl, colorMap.get(lbl) || null]);
+        const labelValues = updateFields.labels.map(lbl => [id, lbl, colorMap.get(lbl) || '#3b82f6']);
         await pool.query(
           `INSERT INTO client_labels (client_id, label, color) VALUES ?`,
           [labelValues]
+        );
+      }
+    }
+
+    // Update client_groups if provided (using client_groups key to match frontend)
+    if (updateFields.client_groups) {
+      await pool.execute(`DELETE FROM client_groups WHERE client_id = ?`, [id]);
+      if (updateFields.client_groups.length > 0) {
+        const groupValues = updateFields.client_groups.map(groupName => [id, groupName]);
+        await pool.query(
+          `INSERT INTO client_groups (client_id, group_name) VALUES ?`,
+          [groupValues]
+        );
+      }
+    }
+
+    // Update managers if provided
+    if (updateFields.managers) {
+      await pool.execute(`DELETE FROM client_managers WHERE client_id = ?`, [id]);
+      if (updateFields.managers.length > 0) {
+        const managerValues = updateFields.managers.map(userId => [id, userId]);
+        await pool.query(
+          `INSERT INTO client_managers (client_id, user_id) VALUES ?`,
+          [managerValues]
         );
       }
     }
@@ -1277,6 +1348,43 @@ const updateClientLabels = async (req, res) => {
   }
 };
 
+/**
+ * Get all distinct client groups for a company
+ * GET /api/v1/clients/groups
+ */
+const getAllGroups = async (req, res) => {
+  try {
+    const companyId = req.query.company_id || req.body.company_id || req.companyId;
+
+    if (!companyId) {
+      return res.status(400).json({
+        success: false,
+        error: 'company_id is required'
+      });
+    }
+
+    const [groups] = await pool.execute(
+      `SELECT DISTINCT cg.group_name 
+       FROM client_groups cg
+       JOIN clients c ON cg.client_id = c.id
+       WHERE c.company_id = ? AND c.is_deleted = 0
+       ORDER BY cg.group_name ASC`,
+      [companyId]
+    );
+
+    res.json({
+      success: true,
+      data: groups.map(g => g.group_name)
+    });
+  } catch (error) {
+    console.error('Get all groups error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to fetch client groups'
+    });
+  }
+};
+
 module.exports = {
   getAll,
   getById,
@@ -1293,6 +1401,6 @@ module.exports = {
   getAllLabels,
   createLabel,
   deleteLabel,
-  updateClientLabels
+  updateClientLabels,
+  getAllGroups
 };
-

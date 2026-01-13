@@ -1,5 +1,38 @@
 const pool = require('../config/db');
 
+const calculateTotals = (items, discount, discountType) => {
+  let subTotal = 0;
+  let taxAmount = 0;
+
+  if (items && Array.isArray(items) && items.length > 0) {
+    items.forEach(item => {
+      const quantity = parseFloat(item.quantity) || 0;
+      const unitPrice = parseFloat(item.unit_price) || 0;
+      const taxRate = parseFloat(item.tax_rate) || 0;
+
+      const itemSubtotal = quantity * unitPrice;
+      const itemTax = itemSubtotal * (taxRate / 100);
+
+      subTotal += itemSubtotal;
+      taxAmount += itemTax;
+    });
+  }
+
+  // Contract specific: discount might not be in schema yet, but good to have logic ready. 
+  // However, contracts schema shows 'amount' but not explicitly sub_total/discount/tax_amount columns in the CREATE TABLE usually.
+  // Wait, the schema shows `amount`, `tax` (string), `second_tax` (string). It does NOT show sub_total, discount_amount, tax_amount columns like estimates.
+  // The 'amount' in contracts seems to be the Total Value. 
+  // I should adjust to update 'amount' based on the calculation.
+
+  const total = subTotal + taxAmount; // ignoring discount for now as it's not in schema
+
+  return {
+    sub_total: subTotal, // Not stored in contracts
+    tax_amount: taxAmount, // Not stored separately as amount
+    total: total
+  };
+};
+
 const generateContractNumber = async (companyId) => {
   const [result] = await pool.execute(`SELECT COUNT(*) as count FROM contracts WHERE company_id = ?`, [companyId]);
   const nextNum = (result[0].count || 0) + 1;
@@ -12,14 +45,14 @@ const getAll = async (req, res) => {
 
     // Admin must provide company_id - required for filtering
     const filterCompanyId = req.query.company_id || req.body.company_id || req.companyId;
-    
+
     if (!filterCompanyId) {
       return res.status(400).json({
         success: false,
         error: 'company_id is required'
       });
     }
-    
+
     let whereClause = 'WHERE c.company_id = ? AND c.is_deleted = 0';
     const params = [filterCompanyId];
 
@@ -48,6 +81,9 @@ const getAll = async (req, res) => {
        ORDER BY c.created_at DESC`,
       params
     );
+
+    // Fetch items for each contract (optional, but good for list view if needed, maybe expensive)
+    // For now, let's NOT fetch items in getAll to keep it fast.
 
     res.json({
       success: true,
@@ -79,9 +115,18 @@ const getById = async (req, res) => {
       });
     }
 
+    const contract = contracts[0];
+
+    // Get contract items
+    const [items] = await pool.execute(
+      `SELECT * FROM contract_items WHERE contract_id = ?`,
+      [id]
+    );
+    contract.items = items || [];
+
     res.json({
       success: true,
-      data: contracts[0]
+      data: contract
     });
   } catch (error) {
     console.error('Get contract error:', error);
@@ -94,22 +139,22 @@ const getById = async (req, res) => {
 
 const create = async (req, res) => {
   try {
-    const { 
+    const {
       title, contract_date, valid_until, client_id, project_id,
-      lead_id, tax, second_tax, note, file_path, amount, status
+      lead_id, tax, second_tax, note, file_path, amount, status, items
     } = req.body;
 
     const companyId = req.body.company_id || req.query.company_id || req.companyId || 1;
     const contract_number = await generateContractNumber(companyId);
-    
+
     // Get created_by from various sources - body, query, req.userId, or default to 1 (admin)
     const effectiveCreatedBy = req.body.user_id || req.query.user_id || req.userId || 1;
 
     // Set default values for required fields
     const today = new Date().toISOString().split('T')[0];
     const defaultValidUntil = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]; // 30 days from now
-    
-    // Normalize status to match ENUM (capitalize first letter)
+
+    // Normalize status
     let normalizedStatus = 'Draft';
     if (status && status !== '') {
       const statusLower = status.toLowerCase();
@@ -117,45 +162,96 @@ const create = async (req, res) => {
       normalizedStatus = statusMap[statusLower] || 'Draft';
     }
 
-    const [result] = await pool.execute(
-      `INSERT INTO contracts (
-        company_id, contract_number, title, contract_date, valid_until,
-        client_id, project_id, lead_id, tax, second_tax, note, file_path,
-        amount, status, created_by
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        companyId,
-        contract_number,
-        (title && title !== '') ? title : `Contract ${contract_number}`,
-        (contract_date && contract_date !== '') ? contract_date : today,
-        (valid_until && valid_until !== '') ? valid_until : defaultValidUntil,
-        (client_id && client_id !== '') ? client_id : null,
-        (project_id && project_id !== '') ? project_id : null,
-        (lead_id && lead_id !== '') ? lead_id : null,
-        (tax && tax !== '') ? tax : null,
-        (second_tax && second_tax !== '') ? second_tax : null,
-        (note && note !== '') ? note : null,
-        (file_path && file_path !== '') ? file_path : null,
-        (amount !== undefined && amount !== null && amount !== '') ? parseFloat(amount) : 0,
-        normalizedStatus,
-        effectiveCreatedBy
-      ]
-    );
+    // Calculate total amount if items are provided
+    let finalAmount = (amount !== undefined && amount !== null && amount !== '') ? parseFloat(amount) : 0;
+    if (items && Array.isArray(items) && items.length > 0) {
+      const totals = calculateTotals(items);
+      finalAmount = totals.total;
+    }
+
+    const connection = await pool.getConnection();
+    let contractId;
+
+    try {
+      await connection.beginTransaction();
+
+      const [result] = await connection.execute(
+        `INSERT INTO contracts (
+          company_id, contract_number, title, contract_date, valid_until,
+          client_id, project_id, lead_id, tax, second_tax, note, file_path,
+          amount, status, created_by
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          companyId,
+          contract_number,
+          (title && title !== '') ? title : `Contract ${contract_number}`,
+          (contract_date && contract_date !== '') ? contract_date : today,
+          (valid_until && valid_until !== '') ? valid_until : defaultValidUntil,
+          (client_id && client_id !== '') ? client_id : null,
+          (project_id && project_id !== '') ? project_id : null,
+          (lead_id && lead_id !== '') ? lead_id : null,
+          (tax && tax !== '') ? tax : null,
+          (second_tax && second_tax !== '') ? second_tax : null,
+          (note && note !== '') ? note : null,
+          (file_path && file_path !== '') ? file_path : null,
+          finalAmount,
+          normalizedStatus,
+          effectiveCreatedBy
+        ]
+      );
+
+      contractId = result.insertId;
+
+      // Handle Items
+      if (items && Array.isArray(items)) {
+        for (const item of items) {
+          await connection.execute(
+            `INSERT INTO contract_items 
+             (contract_id, item_name, description, quantity, unit, unit_price, tax, tax_rate, amount)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              contractId,
+              item.item_name || '',
+              item.description || '',
+              item.quantity || 1,
+              item.unit || 'Pcs',
+              item.unit_price || 0,
+              item.tax || '',
+              item.tax_rate || 0,
+              item.amount || 0
+            ]
+          );
+        }
+      }
+
+      await connection.commit();
+    } catch (err) {
+      await connection.rollback();
+      throw err;
+    } finally {
+      connection.release();
+    }
 
     // Get created contract
     const [contracts] = await pool.execute(
       `SELECT * FROM contracts WHERE id = ?`,
-      [result.insertId]
+      [contractId]
     );
+    const contract = contracts[0];
+    // Add items
+    const [savedItems] = await pool.execute(
+      `SELECT * FROM contract_items WHERE contract_id = ?`,
+      [contractId]
+    );
+    contract.items = savedItems || [];
 
-    res.status(201).json({ 
-      success: true, 
-      data: contracts[0],
+    res.status(201).json({
+      success: true,
+      data: contract,
       message: 'Contract created successfully'
     });
   } catch (error) {
     console.error('Create contract error:', error);
-    console.error('Error details:', error.message);
     res.status(500).json({ success: false, error: 'Failed to create contract', details: error.message });
   }
 };
@@ -169,7 +265,7 @@ const update = async (req, res) => {
     const { id } = req.params;
     const {
       title, contract_date, valid_until, client_id, project_id,
-      lead_id, tax, second_tax, note, file_path, amount, status
+      lead_id, tax, second_tax, note, file_path, amount, status, items
     } = req.body;
 
     // Check if contract exists
@@ -185,67 +281,76 @@ const update = async (req, res) => {
       });
     }
 
-    // Build update query
-    const updates = [];
-    const values = [];
+    const connection = await pool.getConnection();
 
-    if (title !== undefined) {
-      updates.push('title = ?');
-      values.push(title);
-    }
-    if (contract_date !== undefined) {
-      updates.push('contract_date = ?');
-      values.push(contract_date);
-    }
-    if (valid_until !== undefined) {
-      updates.push('valid_until = ?');
-      values.push(valid_until);
-    }
-    if (client_id !== undefined) {
-      updates.push('client_id = ?');
-      values.push(client_id);
-    }
-    if (project_id !== undefined) {
-      updates.push('project_id = ?');
-      values.push(project_id);
-    }
-    if (lead_id !== undefined) {
-      updates.push('lead_id = ?');
-      values.push(lead_id);
-    }
-    if (tax !== undefined) {
-      updates.push('tax = ?');
-      values.push(tax);
-    }
-    if (second_tax !== undefined) {
-      updates.push('second_tax = ?');
-      values.push(second_tax);
-    }
-    if (note !== undefined) {
-      updates.push('note = ?');
-      values.push(note);
-    }
-    if (file_path !== undefined) {
-      updates.push('file_path = ?');
-      values.push(file_path);
-    }
-    if (amount !== undefined) {
-      updates.push('amount = ?');
-      values.push(amount);
-    }
-    if (status !== undefined) {
-      updates.push('status = ?');
-      values.push(status);
-    }
+    try {
+      await connection.beginTransaction();
 
-    if (updates.length > 0) {
-      updates.push('updated_at = CURRENT_TIMESTAMP');
-      values.push(id);
+      let finalAmount = amount;
+      if (items && Array.isArray(items)) {
+        const totals = calculateTotals(items);
+        finalAmount = totals.total; // Auto-update amount from items
+      }
 
-      await pool.execute(
-        `UPDATE contracts SET ${updates.join(', ')} WHERE id = ?`,
-        values
-      );
+      // Build update query
+      const updates = [];
+      const values = [];
+
+      if (title !== undefined) updates.push('title = ?'), values.push(title);
+      if (contract_date !== undefined) updates.push('contract_date = ?'), values.push(contract_date);
+      if (valid_until !== undefined) updates.push('valid_until = ?'), values.push(valid_until);
+      if (client_id !== undefined) updates.push('client_id = ?'), values.push(client_id);
+      if (project_id !== undefined) updates.push('project_id = ?'), values.push(project_id);
+      if (lead_id !== undefined) updates.push('lead_id = ?'), values.push(lead_id);
+      if (tax !== undefined) updates.push('tax = ?'), values.push(tax);
+      if (second_tax !== undefined) updates.push('second_tax = ?'), values.push(second_tax);
+      if (note !== undefined) updates.push('note = ?'), values.push(note);
+      if (file_path !== undefined) updates.push('file_path = ?'), values.push(file_path);
+      if (finalAmount !== undefined) updates.push('amount = ?'), values.push(finalAmount);
+      if (status !== undefined) updates.push('status = ?'), values.push(status);
+
+      if (updates.length > 0) {
+        updates.push('updated_at = CURRENT_TIMESTAMP');
+        values.push(id);
+
+        await connection.execute(
+          `UPDATE contracts SET ${updates.join(', ')} WHERE id = ?`,
+          values
+        );
+      }
+
+      // Handle Items
+      if (items && Array.isArray(items)) {
+        // Delete existing items
+        await connection.execute('DELETE FROM contract_items WHERE contract_id = ?', [id]);
+
+        // Insert new items
+        for (const item of items) {
+          await connection.execute(
+            `INSERT INTO contract_items 
+             (contract_id, item_name, description, quantity, unit, unit_price, tax, tax_rate, amount)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              id,
+              item.item_name || '',
+              item.description || '',
+              item.quantity || 1,
+              item.unit || 'Pcs',
+              item.unit_price || 0,
+              item.tax || '',
+              item.tax_rate || 0,
+              item.amount || 0
+            ]
+          );
+        }
+      }
+
+      await connection.commit();
+    } catch (err) {
+      await connection.rollback();
+      throw err;
+    } finally {
+      connection.release();
     }
 
     // Get updated contract with client name
@@ -256,10 +361,18 @@ const update = async (req, res) => {
        WHERE c.id = ?`,
       [id]
     );
+    const updatedContract = updatedContracts[0];
+
+    // Get items
+    const [updatedItems] = await pool.execute(
+      `SELECT * FROM contract_items WHERE contract_id = ?`,
+      [id]
+    );
+    updatedContract.items = updatedItems || [];
 
     res.json({
       success: true,
-      data: updatedContracts[0],
+      data: updatedContract,
       message: 'Contract updated successfully'
     });
   } catch (error) {
@@ -323,10 +436,18 @@ const updateStatus = async (req, res) => {
       `SELECT * FROM contracts WHERE id = ?`,
       [id]
     );
+    const contract = updatedContracts[0];
+
+    // Get items
+    const [items] = await pool.execute(
+      `SELECT * FROM contract_items WHERE contract_id = ?`,
+      [id]
+    );
+    contract.items = items || [];
 
     res.json({
       success: true,
-      data: updatedContracts[0],
+      data: contract,
       message: 'Contract status updated successfully'
     });
   } catch (error) {
@@ -396,6 +517,13 @@ const getPDF = async (req, res) => {
     }
 
     const contract = contracts[0];
+
+    // Get items
+    const [items] = await pool.execute(
+      `SELECT * FROM contract_items WHERE contract_id = ?`,
+      [id]
+    );
+    contract.items = items || [];
 
     // For now, return JSON. In production, you would generate actual PDF using libraries like pdfkit or puppeteer
     if (req.query.download === '1') {

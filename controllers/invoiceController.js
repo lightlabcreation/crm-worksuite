@@ -303,12 +303,13 @@ const getById = async (req, res) => {
 const create = async (req, res) => {
   try {
     const {
-      company_id, invoice_date, due_date, currency, exchange_rate, client_id, project_id,
+      company_id, invoice_date, bill_date, due_date, currency, exchange_rate, client_id, project_id,
       calculate_tax, bank_account, payment_details, billing_address,
       shipping_address, generated_by, note, terms, discount, discount_type,
       items = [], is_recurring, billing_frequency, recurring_start_date,
       recurring_total_count, is_time_log_invoice, time_log_from, time_log_to,
-      created_by, user_id, labels, tax, tax_rate, second_tax, second_tax_rate, tds
+      created_by, user_id, labels, tax, tax_rate, second_tax, second_tax_rate, tds,
+      repeat_every, repeat_type, cycles
     } = req.body;
 
     // Use company_id from body, or fallback to req.companyId
@@ -347,6 +348,29 @@ const create = async (req, res) => {
     // Generate invoice number
     const invoice_number = await generateInvoiceNumber(companyIdNum);
 
+    // Handle recurring fields - map from new format to existing format
+    const effectiveBillDate = bill_date || invoice_date;
+    const effectiveIsRecurring = is_recurring === 1 || is_recurring === true || is_recurring === '1' || is_recurring === 'true';
+    
+    // Map repeat_type to billing_frequency if not provided
+    let effectiveBillingFrequency = billing_frequency;
+    if (!effectiveBillingFrequency && repeat_type) {
+      // Map Day(s) -> Daily, Week(s) -> Weekly, Month(s) -> Monthly, Year(s) -> Yearly
+      const frequencyMap = {
+        'Day(s)': 'Daily',
+        'Week(s)': 'Weekly', 
+        'Month(s)': 'Monthly',
+        'Year(s)': 'Yearly'
+      };
+      effectiveBillingFrequency = frequencyMap[repeat_type] || repeat_type;
+    }
+    
+    // Map cycles to recurring_total_count
+    const effectiveRecurringTotalCount = cycles && cycles !== '' ? parseInt(cycles) : (recurring_total_count || null);
+    
+    // Use invoice_date as recurring_start_date if not provided and recurring is enabled
+    const effectiveRecurringStartDate = recurring_start_date || (effectiveIsRecurring ? effectiveBillDate : null);
+
     // Calculate totals - handle empty items array
     const totals = items && items.length > 0 
       ? calculateTotals(items, discount, discount_type)
@@ -364,6 +388,10 @@ const create = async (req, res) => {
     const hasSecondTax = columnNames.includes('second_tax');
     const hasTds = columnNames.includes('tds');
 
+    // Check for repeat_every, repeat_type columns (for future use)
+    const hasRepeatEvery = columnNames.includes('repeat_every');
+    const hasRepeatType = columnNames.includes('repeat_type');
+
     // Build dynamic INSERT query based on available columns
     let insertFields = [
       'company_id', 'invoice_number', 'invoice_date', 'due_date', 'currency', 'exchange_rate',
@@ -377,7 +405,7 @@ const create = async (req, res) => {
     let insertValues = [
       companyIdNum,
       invoice_number,
-      invoice_date ?? null,
+      effectiveBillDate ?? null,
       due_date ?? null,
       currency || 'USD',
       exchange_rate ?? 1.0,
@@ -400,10 +428,10 @@ const create = async (req, res) => {
       totals.total ?? 0,
       totals.unpaid ?? 0,
       'Unpaid',
-      is_recurring ?? 0,
-      billing_frequency ?? null,
-      recurring_start_date ?? null,
-      recurring_total_count ?? null,
+      effectiveIsRecurring ? 1 : 0,
+      effectiveBillingFrequency ?? null,
+      effectiveRecurringStartDate ?? null,
+      effectiveRecurringTotalCount ?? null,
       is_time_log_invoice ?? 0,
       time_log_from ?? null,
       time_log_to ?? null,
@@ -426,6 +454,16 @@ const create = async (req, res) => {
     if (hasTds) {
       insertFields.push('tds');
       insertValues.push(tds ?? null);
+    }
+    
+    // Add repeat_every and repeat_type if columns exist
+    if (hasRepeatEvery && repeat_every) {
+      insertFields.push('repeat_every');
+      insertValues.push(parseInt(repeat_every) || null);
+    }
+    if (hasRepeatType && repeat_type) {
+      insertFields.push('repeat_type');
+      insertValues.push(repeat_type || null);
     }
 
     const placeholders = insertFields.map(() => '?').join(', ');
@@ -543,14 +581,15 @@ const update = async (req, res) => {
 
     // Build update query - only include fields that exist in the database
     const baseAllowedFields = [
-      'invoice_date', 'due_date', 'currency', 'exchange_rate', 'client_id',
+      'invoice_date', 'bill_date', 'due_date', 'currency', 'exchange_rate', 'client_id',
       'project_id', 'calculate_tax', 'bank_account', 'payment_details',
       'billing_address', 'shipping_address', 'note', 'terms', 'discount',
-      'discount_type', 'status', 'is_recurring'
+      'discount_type', 'status', 'is_recurring', 'billing_frequency',
+      'recurring_start_date', 'recurring_total_count'
     ];
     
     // Only add optional fields if they exist in the database
-    const optionalFields = ['tax', 'tax_rate', 'second_tax', 'second_tax_rate', 'tds', 'labels'];
+    const optionalFields = ['tax', 'tax_rate', 'second_tax', 'second_tax_rate', 'tds', 'labels', 'repeat_every', 'repeat_type'];
     const allowedFields = [
       ...baseAllowedFields,
       ...optionalFields.filter(f => columnNames.includes(f))
@@ -559,13 +598,61 @@ const update = async (req, res) => {
     const updates = [];
     const values = [];
 
+    // Handle recurring fields mapping
+    const handleRecurringFields = () => {
+      if (updateFields.hasOwnProperty('is_recurring')) {
+        const isRecurring = updateFields.is_recurring === 1 || updateFields.is_recurring === true || updateFields.is_recurring === '1';
+        
+        // Map repeat_type to billing_frequency
+        if (updateFields.repeat_type && columnNames.includes('billing_frequency')) {
+          const frequencyMap = {
+            'Day(s)': 'Daily',
+            'Week(s)': 'Weekly',
+            'Month(s)': 'Monthly',
+            'Year(s)': 'Yearly'
+          };
+          updateFields.billing_frequency = frequencyMap[updateFields.repeat_type] || updateFields.repeat_type;
+        }
+        
+        // Map cycles to recurring_total_count
+        if (updateFields.hasOwnProperty('cycles')) {
+          updateFields.recurring_total_count = updateFields.cycles && updateFields.cycles !== '' ? parseInt(updateFields.cycles) : null;
+        }
+      }
+    };
+    
+    handleRecurringFields();
+
     for (const field of allowedFields) {
       if (updateFields.hasOwnProperty(field)) {
-        updates.push(`${field} = ?`);
-        // Ensure no undefined values
-        const val = updateFields[field];
-        values.push(val === undefined ? null : val);
+        // Handle bill_date -> invoice_date mapping if bill_date is provided but invoice_date is not
+        if (field === 'bill_date' && !updateFields.hasOwnProperty('invoice_date')) {
+          updates.push(`invoice_date = ?`);
+          values.push(updateFields.bill_date === undefined || updateFields.bill_date === '' ? null : updateFields.bill_date);
+          if (columnNames.includes('bill_date')) {
+            updates.push(`bill_date = ?`);
+            values.push(updateFields.bill_date === undefined || updateFields.bill_date === '' ? null : updateFields.bill_date);
+          }
+        } else if (field === 'bill_date' && updateFields.hasOwnProperty('invoice_date')) {
+          // Skip bill_date if invoice_date is also being updated
+          continue;
+        } else {
+          updates.push(`${field} = ?`);
+          // Ensure no undefined values
+          const val = updateFields[field];
+          values.push(val === undefined || val === '' ? null : val);
+        }
       }
+    }
+    
+    // Handle repeat_every and repeat_type if columns exist
+    if (updateFields.hasOwnProperty('repeat_every') && columnNames.includes('repeat_every')) {
+      updates.push(`repeat_every = ?`);
+      values.push(updateFields.repeat_every ? parseInt(updateFields.repeat_every) : null);
+    }
+    if (updateFields.hasOwnProperty('repeat_type') && columnNames.includes('repeat_type')) {
+      updates.push(`repeat_type = ?`);
+      values.push(updateFields.repeat_type || null);
     }
 
     // Recalculate totals if items are updated

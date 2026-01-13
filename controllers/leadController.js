@@ -575,32 +575,28 @@ const convertToClient = async (req, res) => {
       [email, companyId]
     );
 
+    let ownerId;
+
     if (existingUsers.length > 0) {
-      await connection.rollback();
-      connection.release();
-      return res.status(400).json({
-        success: false,
-        error: 'User with this email already exists'
-      });
+      ownerId = existingUsers[0].id;
+    } else {
+      // Create user account first
+      // Note: bcrypt must be initialized/imported
+      const hashedPassword = await bcrypt.hash(password, 10);
+      const [userResult] = await connection.execute(
+        `INSERT INTO users (company_id, name, email, password, role, status)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          companyId,
+          companyName,
+          email,
+          hashedPassword,
+          'CLIENT',
+          'Active'
+        ]
+      );
+      ownerId = userResult.insertId;
     }
-
-    // Create user account first
-    // Note: bcrypt must be initialized/imported
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const [userResult] = await connection.execute(
-      `INSERT INTO users (company_id, name, email, password, role, status)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [
-        companyId,
-        companyName,
-        email,
-        hashedPassword,
-        'CLIENT',
-        'Active'
-      ]
-    );
-
-    const ownerId = userResult.insertId;
 
     // Create client
     const [clientResult] = await connection.execute(

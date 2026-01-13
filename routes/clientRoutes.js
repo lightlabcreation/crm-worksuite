@@ -15,6 +15,7 @@ router.get('/contacts/all', clientController.getAllContacts);
 router.get('/labels', clientController.getAllLabels);
 router.post('/labels', clientController.createLabel);
 router.delete('/labels/:label', clientController.deleteLabel);
+router.get('/groups', clientController.getAllGroups);
 router.put('/:id/labels', clientController.updateClientLabels);
 router.get('/', clientController.getAll);
 router.get('/:id', clientController.getById);

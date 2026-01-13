@@ -121,12 +121,13 @@ const getAll = async (req, res) => {
 
     // No pagination needed - removed count query
 
-    // Get all estimates without pagination - removed estimate_date column (doesn't exist)
+    // Get all estimates without pagination - includes proposal_date as estimate_date
     const [estimates] = await pool.execute(
       `SELECT 
         e.id,
         e.company_id,
         e.estimate_number,
+        e.proposal_date,
         e.created_at,
         e.created_by,
         e.valid_till,
@@ -137,6 +138,8 @@ const getAll = async (req, res) => {
         e.description,
         e.note,
         e.terms,
+        e.tax,
+        e.second_tax,
         e.discount,
         e.discount_type,
         e.sub_total,
@@ -202,11 +205,13 @@ const getById = async (req, res) => {
   try {
     const { id } = req.params;
     const [estimates] = await pool.execute(
-      `SELECT e.*, c.company_name as client_name, p.project_name, comp.name as company_name
+      `SELECT e.*, c.company_name as client_name, p.project_name, comp.name as company_name,
+              u.name as created_by_name
        FROM estimates e
        LEFT JOIN clients c ON e.client_id = c.id
        LEFT JOIN projects p ON e.project_id = p.id
        LEFT JOIN companies comp ON e.company_id = comp.id
+       LEFT JOIN users u ON e.created_by = u.id
        WHERE e.id = ? AND e.is_deleted = 0`,
       [id]
     );
@@ -233,8 +238,8 @@ const getById = async (req, res) => {
 const create = async (req, res) => {
   try {
     const {
-      valid_till, currency, client_id, project_id, lead_id,
-      calculate_tax, description, note, terms,
+      estimate_date, proposal_date, valid_till, currency, client_id, project_id, lead_id,
+      calculate_tax, description, note, terms, tax, second_tax,
       discount, discount_type, items = [], status
     } = req.body;
 
@@ -270,17 +275,21 @@ const create = async (req, res) => {
       };
     }
 
+    // Use estimate_date or proposal_date for the proposal_date field
+    const estimateDateValue = estimate_date || proposal_date || null;
+    
     // Insert estimate
     // Convert all undefined/empty values to null explicitly
     const [result] = await pool.execute(
       `INSERT INTO estimates (
-        company_id, estimate_number, valid_till, currency, client_id, project_id, lead_id,
-        calculate_tax, description, note, terms, discount, discount_type,
+        company_id, estimate_number, proposal_date, valid_till, currency, client_id, project_id, lead_id,
+        calculate_tax, description, note, terms, tax, second_tax, discount, discount_type,
         sub_total, discount_amount, tax_amount, total, created_by, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         companyId || null,
         estimate_number || null,
+        (estimateDateValue && estimateDateValue !== '') ? estimateDateValue : null,
         (valid_till && valid_till !== '') ? valid_till : null,
         (currency && currency !== '') ? currency : 'USD',
         (client_id && client_id !== '') ? client_id : null,
@@ -290,6 +299,8 @@ const create = async (req, res) => {
         (description && description !== '') ? description : null,
         (note && note !== '') ? note : null,
         (terms && terms !== '') ? terms : 'Thank you for your business.',
+        (tax && tax !== '') ? tax : null,
+        (second_tax && second_tax !== '') ? second_tax : null,
         (discount !== undefined && discount !== null && discount !== '') ? parseFloat(discount) : 0,
         // Map discount_type to valid ENUM values: '%' or 'fixed'
         (discount_type === 'fixed' || discount_type === 'Fixed' || discount_type === 'amount') ? 'fixed' : '%',
@@ -298,8 +309,8 @@ const create = async (req, res) => {
         totals.tax_amount || 0,
         totals.total || 0,
         effectiveCreatedBy || 1,
-        // Map status to valid ENUM values: 'Waiting', 'Accepted', 'Declined', 'Expired', 'Draft'
-        (status === 'draft' || status === 'Draft' || !status) ? 'Draft' : status
+        // Map status to valid ENUM values: 'Waiting', 'Accepted', 'Declined', 'Expired', 'Draft', 'Sent'
+        (status === 'draft' || status === 'Draft' || !status) ? 'Draft' : (status === 'sent' || status === 'Sent') ? 'Sent' : status
       ]
     );
 
@@ -396,8 +407,8 @@ const update = async (req, res) => {
 
     // Build update query
     const allowedFields = [
-      'valid_till', 'currency', 'client_id', 'project_id', 'calculate_tax',
-      'description', 'note', 'terms', 'discount', 'discount_type', 'status'
+      'estimate_date', 'proposal_date', 'valid_till', 'currency', 'client_id', 'project_id', 'calculate_tax',
+      'description', 'note', 'terms', 'tax', 'second_tax', 'discount', 'discount_type', 'status'
     ];
 
     const updates = [];
@@ -405,10 +416,17 @@ const update = async (req, res) => {
 
     for (const field of allowedFields) {
       if (updateFields.hasOwnProperty(field)) {
-        updates.push(`${field} = ?`);
-        // Ensure no undefined values
-        const val = updateFields[field];
-        values.push(val === undefined ? null : val);
+        // Handle estimate_date -> proposal_date mapping
+        if (field === 'estimate_date') {
+          updates.push(`proposal_date = ?`);
+          const val = updateFields[field];
+          values.push(val === undefined || val === '' ? null : val);
+        } else {
+          updates.push(`${field} = ?`);
+          // Ensure no undefined values
+          const val = updateFields[field];
+          values.push(val === undefined || val === '' ? null : val);
+        }
       }
     }
 

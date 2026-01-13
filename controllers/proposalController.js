@@ -301,37 +301,38 @@ const getById = async (req, res) => {
 };
 
 const create = async (req, res) => {
+  const connection = await pool.getConnection();
   try {
+    await connection.beginTransaction();
+
     const {
       proposal_date, valid_till, client_id, tax, second_tax, note,
-      currency, status
+      currency, status, items, description, terms, discount, discount_type
     } = req.body;
-
-    // No required validation - save whatever data is provided
 
     const companyId = req.body.company_id || req.query.company_id || req.companyId || 1;
     const proposal_number = await generateProposalNumber(companyId);
-
-    // Get created_by from various sources - body, query, req.userId, or default to 1 (admin)
     const effectiveCreatedBy = req.body.user_id || req.query.user_id || req.userId || req.user?.id || 1;
 
-    // Map status: 'sent' -> 'Sent', 'draft' -> 'Draft', etc.
+    // Map status
     let mappedStatus = 'Draft';
-    if (status === 'sent') {
-      mappedStatus = 'Sent';
-    } else if (status === 'draft') {
-      mappedStatus = 'Draft';
-    } else if (status) {
-      mappedStatus = status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
+    if (status === 'sent') mappedStatus = 'Sent';
+    else if (status === 'draft') mappedStatus = 'Draft';
+    else if (status) mappedStatus = status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
+
+    // Calculate totals if items exist
+    let totals = { sub_total: 0, discount_amount: 0, tax_amount: 0, total: 0 };
+    if (items && Array.isArray(items) && items.length > 0) {
+      totals = calculateTotals(items, discount, discount_type);
     }
 
-    // Insert proposal (using estimates table with PROP# prefix)
-    // Convert all undefined/empty values to null explicitly
-    const [result] = await pool.execute(
+    // Insert proposal
+    const [result] = await connection.execute(
       `INSERT INTO estimates (
         company_id, estimate_number, proposal_date, valid_till, currency, client_id,
-        tax, second_tax, note, sub_total, discount_amount, tax_amount, total, status, created_by
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        tax, second_tax, note, description, terms, discount, discount_type,
+        sub_total, discount_amount, tax_amount, total, status, created_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         companyId || null,
         proposal_number || null,
@@ -342,16 +343,44 @@ const create = async (req, res) => {
         (tax && tax !== '') ? tax : null,
         (second_tax && second_tax !== '') ? second_tax : null,
         (note && note !== '') ? note : null,
-        0, // sub_total
-        0, // discount_amount
-        0, // tax_amount
-        0, // total
+        (description && description !== '') ? description : null,
+        (terms && terms !== '') ? terms : 'Thank you for your business.',
+        discount || 0,
+        discount_type || '%',
+        totals.sub_total,
+        totals.discount_amount,
+        totals.tax_amount,
+        totals.total,
         mappedStatus || 'Draft',
         effectiveCreatedBy || 1
       ]
     );
 
     const proposalId = result.insertId;
+
+    // Insert items
+    if (items && Array.isArray(items) && items.length > 0) {
+      for (const item of items) {
+        await connection.execute(
+          `INSERT INTO estimate_items 
+           (estimate_id, item_name, description, quantity, unit, unit_price, tax, tax_rate, amount)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            proposalId,
+            item.item_name || '',
+            item.description || '',
+            item.quantity || 1,
+            item.unit || 'Pcs',
+            item.unit_price || 0,
+            item.tax || '',
+            item.tax_rate || 0,
+            item.amount || 0
+          ]
+        );
+      }
+    }
+
+    await connection.commit();
 
     // Fetch the created proposal with relations
     const [proposals] = await pool.execute(
@@ -366,13 +395,23 @@ const create = async (req, res) => {
 
     const proposal = proposals[0];
 
+    // Get items
+    const [itemsData] = await pool.execute(
+      `SELECT * FROM estimate_items WHERE estimate_id = ?`,
+      [proposalId]
+    );
+    proposal.items = itemsData || [];
+
     res.status(201).json({ success: true, data: proposal });
   } catch (error) {
+    await connection.rollback();
     console.error('Create proposal error:', error);
     res.status(500).json({
       success: false,
       error: error.message || 'Failed to create proposal'
     });
+  } finally {
+    connection.release();
   }
 };
 
@@ -381,7 +420,7 @@ const update = async (req, res) => {
     const { id } = req.params;
     const {
       proposal_date, valid_till, client_id, tax, second_tax, note,
-      currency, status
+      currency, status, items, description, terms, discount, discount_type
     } = req.body;
 
     // Check if proposal exists
@@ -404,50 +443,78 @@ const update = async (req, res) => {
       mappedStatus = status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
     }
 
-    // Update proposal
-    const updateFields = [];
-    const updateValues = [];
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
 
-    if (proposal_date !== undefined) {
-      updateFields.push('proposal_date = ?');
-      updateValues.push(proposal_date);
-    }
-    if (valid_till !== undefined) {
-      updateFields.push('valid_till = ?');
-      updateValues.push(valid_till);
-    }
-    if (currency !== undefined) {
-      updateFields.push('currency = ?');
-      updateValues.push(currency);
-    }
-    if (client_id !== undefined) {
-      updateFields.push('client_id = ?');
-      updateValues.push(client_id);
-    }
-    if (tax !== undefined) {
-      updateFields.push('tax = ?');
-      updateValues.push(tax);
-    }
-    if (second_tax !== undefined) {
-      updateFields.push('second_tax = ?');
-      updateValues.push(second_tax);
-    }
-    if (note !== undefined) {
-      updateFields.push('note = ?');
-      updateValues.push(note);
-    }
-    if (mappedStatus !== null) {
-      updateFields.push('status = ?');
-      updateValues.push(mappedStatus);
-    }
+      // Update basic fields
+      const updateFields = [];
+      const updateValues = [];
 
-    updateFields.push('updated_at = CURRENT_TIMESTAMP');
-    updateValues.push(id);
+      if (proposal_date !== undefined) updateFields.push('proposal_date = ?'), updateValues.push(proposal_date);
+      if (valid_till !== undefined) updateFields.push('valid_till = ?'), updateValues.push(valid_till);
+      if (currency !== undefined) updateFields.push('currency = ?'), updateValues.push(currency);
+      if (client_id !== undefined) updateFields.push('client_id = ?'), updateValues.push(client_id);
+      if (tax !== undefined) updateFields.push('tax = ?'), updateValues.push(tax);
+      if (second_tax !== undefined) updateFields.push('second_tax = ?'), updateValues.push(second_tax);
+      if (note !== undefined) updateFields.push('note = ?'), updateValues.push(note);
+      if (description !== undefined) updateFields.push('description = ?'), updateValues.push(description);
+      if (terms !== undefined) updateFields.push('terms = ?'), updateValues.push(terms);
+      if (mappedStatus !== null) updateFields.push('status = ?'), updateValues.push(mappedStatus);
+      if (discount !== undefined) updateFields.push('discount = ?'), updateValues.push(discount);
+      if (discount_type !== undefined) updateFields.push('discount_type = ?'), updateValues.push(discount_type);
 
-    await pool.execute(
-      `UPDATE estimates SET ${updateFields.join(', ')} WHERE id = ?`,
-      updateValues
-    );
+      // Handle Items if provided
+      if (items && Array.isArray(items)) {
+        // Delete existing items
+        await connection.execute('DELETE FROM estimate_items WHERE estimate_id = ?', [id]);
+
+        // Insert new items
+        for (const item of items) {
+          await connection.execute(
+            `INSERT INTO estimate_items 
+             (estimate_id, item_name, description, quantity, unit, unit_price, tax, tax_rate, amount)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              id,
+              item.item_name || '',
+              item.description || '',
+              item.quantity || 1,
+              item.unit || 'Pcs',
+              item.unit_price || 0,
+              item.tax || '',
+              item.tax_rate || 0,
+              item.amount || 0
+            ]
+          );
+        }
+
+        // Calculate Totals
+        const totals = calculateTotals(items, discount, discount_type); // Make sure calculateTotals is accessible or define it inside
+
+        updateFields.push('sub_total = ?'); updateValues.push(totals.sub_total);
+        updateFields.push('discount_amount = ?'); updateValues.push(totals.discount_amount);
+        updateFields.push('tax_amount = ?'); updateValues.push(totals.tax_amount);
+        updateFields.push('total = ?'); updateValues.push(totals.total);
+      }
+
+      updateFields.push('updated_at = CURRENT_TIMESTAMP');
+      updateValues.push(id);
+
+      if (updateFields.length > 1) { // > 1 because updated_at is always added
+        await connection.execute(
+          `UPDATE estimates SET ${updateFields.join(', ')} WHERE id = ?`,
+          updateValues
+        );
+      }
+
+      await connection.commit();
+    } catch (err) {
+      await connection.rollback();
+      throw err;
+    } finally {
+      connection.release();
+    }
 
     // Fetch updated proposal
     const [proposals] = await pool.execute(
@@ -461,6 +528,11 @@ const update = async (req, res) => {
     );
 
     const proposal = proposals[0];
+    const [itemsData] = await pool.execute(
+      `SELECT * FROM estimate_items WHERE estimate_id = ?`,
+      [id]
+    );
+    proposal.items = itemsData;
 
     res.json({ success: true, data: proposal });
   } catch (error) {

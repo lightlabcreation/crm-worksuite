@@ -7,17 +7,19 @@ const pool = require('../config/db');
 const getAll = async (req, res) => {
   try {
     // Only filter by company_id if explicitly provided in query params or req.companyId exists
-    const filterCompanyId = req.query.company_id || req.body.company_id || 1;
+    const filterCompanyId = req.query.company_id || req.companyId;
     const type = req.query.type;
-    
+
     let whereClause = 'WHERE f.is_deleted = 0';
     const params = [];
-    
+
     if (filterCompanyId) {
-      whereClause += ' AND f.company_id = ?';
+      whereClause += ' AND (f.company_id = ? OR f.company_id IS NULL)'; // Show company specific + global templates
       params.push(filterCompanyId);
+    } else {
+      whereClause += ' AND f.company_id IS NULL'; // Show only global templates if no company context
     }
-    
+
     if (type) {
       whereClause += ' AND f.type = ?';
       params.push(type);
@@ -48,15 +50,15 @@ const getAll = async (req, res) => {
       status: 'Active' // Default status
     }));
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       data: parsedTemplates
     });
   } catch (error) {
     console.error('Get finance templates error:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message || 'Failed to fetch finance templates' 
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to fetch finance templates'
     });
   }
 };
@@ -64,7 +66,7 @@ const getAll = async (req, res) => {
 const getById = async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     const [templates] = await pool.execute(
       `SELECT 
         f.*,
@@ -74,16 +76,16 @@ const getById = async (req, res) => {
        WHERE f.id = ? AND f.is_deleted = 0`,
       [id]
     );
-    
+
     if (templates.length === 0) {
-      return res.status(404).json({ 
-        success: false, 
-        error: 'Finance template not found' 
+      return res.status(404).json({
+        success: false,
+        error: 'Finance template not found'
       });
     }
 
     const template = templates[0];
-    
+
     // Parse JSON template_data
     if (template.template_data) {
       template.template_data = JSON.parse(template.template_data);
@@ -92,9 +94,9 @@ const getById = async (req, res) => {
     res.json({ success: true, data: template });
   } catch (error) {
     console.error('Get finance template error:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message || 'Failed to fetch finance template' 
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to fetch finance template'
     });
   }
 };
@@ -102,7 +104,6 @@ const getById = async (req, res) => {
 const create = async (req, res) => {
   try {
     const {
-      company_id,
       name,
       type,
       template_data
@@ -116,13 +117,7 @@ const create = async (req, res) => {
       });
     }
 
-    const companyId = company_id || req.companyId;
-    if (!companyId) {
-      return res.status(400).json({
-        success: false,
-        error: "company_id is required"
-      });
-    }
+    const companyId = req.companyId || null;
 
     // Convert template_data to JSON string
     const templateDataJson = template_data ? JSON.stringify(template_data) : null;
@@ -154,22 +149,22 @@ const create = async (req, res) => {
     );
 
     const template = templates[0];
-    
+
     // Parse JSON template_data
     if (template.template_data) {
       template.template_data = JSON.parse(template.template_data);
     }
 
-    res.status(201).json({ 
-      success: true, 
+    res.status(201).json({
+      success: true,
       data: template,
-      message: 'Finance template created successfully' 
+      message: 'Finance template created successfully'
     });
   } catch (error) {
     console.error('Create finance template error:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message || 'Failed to create finance template' 
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to create finance template'
     });
   }
 };
@@ -201,12 +196,18 @@ const update = async (req, res) => {
     const values = [];
 
     if (name !== undefined) {
+      if (!name || name.trim() === '') {
+        return res.status(400).json({ error: 'Name cannot be empty' });
+      }
       updates.push('name = ?');
-      values.push(name);
+      values.push(name.trim());
     }
     if (type !== undefined) {
+      if (!type || type.trim() === '') {
+        return res.status(400).json({ error: 'Type cannot be empty' });
+      }
       updates.push('type = ?');
-      values.push(type);
+      values.push(type.trim());
     }
     if (template_data !== undefined) {
       updates.push('template_data = ?');
@@ -235,7 +236,7 @@ const update = async (req, res) => {
     );
 
     const template = templates[0];
-    
+
     // Parse JSON template_data
     if (template.template_data) {
       template.template_data = JSON.parse(template.template_data);
@@ -248,9 +249,9 @@ const update = async (req, res) => {
     });
   } catch (error) {
     console.error('Update finance template error:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message || 'Failed to update finance template' 
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to update finance template'
     });
   }
 };
@@ -258,30 +259,30 @@ const update = async (req, res) => {
 const deleteTemplate = async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     const [result] = await pool.execute(
       `UPDATE finance_templates 
        SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP 
        WHERE id = ?`,
       [id]
     );
-    
+
     if (result.affectedRows === 0) {
       return res.status(404).json({
         success: false,
         error: 'Finance template not found'
       });
     }
-    
-    res.json({ 
-      success: true, 
-      message: 'Finance template deleted successfully' 
+
+    res.json({
+      success: true,
+      message: 'Finance template deleted successfully'
     });
   } catch (error) {
     console.error('Delete finance template error:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message || 'Failed to delete finance template' 
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to delete finance template'
     });
   }
 };
@@ -407,7 +408,7 @@ const generateHTMLReport = (templateData, documentData) => {
  */
 const generateDefaultTemplate = (data) => {
   let html = '<div>';
-  
+
   if (data.client_name) {
     html += `<p><strong>Client:</strong> ${data.client_name}</p>`;
   }
@@ -429,16 +430,16 @@ const generateDefaultTemplate = (data) => {
   if (data.total) {
     html += `<p class="total">Total: $${parseFloat(data.total).toFixed(2)}</p>`;
   }
-  
+
   html += '</div>';
   return html;
 };
 
-module.exports = { 
-  getAll, 
-  getById, 
-  create, 
-  update, 
+module.exports = {
+  getAll,
+  getById,
+  create,
+  update,
   delete: deleteTemplate,
   generateReport
 };
