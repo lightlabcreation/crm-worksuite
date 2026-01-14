@@ -66,7 +66,6 @@ const API_VERSION = process.env.API_VERSION || 'v1';
 app.use(helmet());
 
 // CORS - Allow multiple origins
-// CORS - Allow multiple origins
 app.use(
   cors({
     origin: [
@@ -79,6 +78,7 @@ app.use(
     credentials: true
   })
 );
+
 // Handle preflight requests
 app.options('*', cors());
 

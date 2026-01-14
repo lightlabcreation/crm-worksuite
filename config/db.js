@@ -325,6 +325,36 @@ const runAutoMigrations = async () => {
       } catch (err) {
         console.log('⚠️ Could not modify client_id in projects:', err.message);
       }
+
+      // Check if contract_items table exists
+      const [contractItemsTable] = await pool.execute(
+        `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES 
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'contract_items'`
+      );
+
+      if (contractItemsTable.length === 0) {
+        console.log('📦 Running migration: Creating contract_items table...');
+        await pool.query(`
+          CREATE TABLE contract_items (
+            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            contract_id INT UNSIGNED NOT NULL,
+            item_name VARCHAR(255) NOT NULL,
+            description TEXT NULL,
+            quantity DECIMAL(10, 2) DEFAULT 1.00,
+            unit ENUM('Pcs', 'Kg', 'Hours', 'Days') DEFAULT 'Pcs',
+            unit_price DECIMAL(15, 2) NOT NULL,
+            tax VARCHAR(50) NULL,
+            tax_rate DECIMAL(5, 2) DEFAULT 0.00,
+            amount DECIMAL(15, 2) NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (contract_id) REFERENCES contracts(id) ON DELETE CASCADE,
+            INDEX idx_contract_item_contract (contract_id)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        `);
+        console.log('✅ Migration completed: contract_items table created');
+      }
+
     }
 
     // Check if orders table exists, create if not
@@ -772,6 +802,63 @@ pool.getConnection()
 
     } catch (migErr) {
       console.error('⚠️ Detailed migration error:', migErr);
+    }
+
+    try {
+      // Check if type column exists in clients table
+      const [clientTypeCol] = await pool.execute(
+        `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'clients' AND COLUMN_NAME = 'type'`
+      );
+      if (clientTypeCol.length === 0) {
+        console.log('📦 Running migration: Adding type to clients table...');
+        await pool.execute("ALTER TABLE clients ADD COLUMN type ENUM('Organization', 'Person') DEFAULT 'Organization' AFTER company_name");
+        console.log('✅ Migration completed: type column added to clients');
+      }
+
+      // Check if client_groups table exists
+      const [clientGroupsTable] = await pool.execute(
+        `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES 
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'client_groups'`
+      );
+      if (clientGroupsTable.length === 0) {
+        console.log('📦 Running migration: Creating client_groups table...');
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS client_groups (
+            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            client_id INT UNSIGNED NOT NULL,
+            group_name VARCHAR(100) NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_client_id (client_id),
+            FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        `);
+        console.log('✅ Migration completed: client_groups table created');
+      }
+
+      // Check if client_managers table exists
+      const [clientManagersTable] = await pool.execute(
+        `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES 
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'client_managers'`
+      );
+      if (clientManagersTable.length === 0) {
+        console.log('📦 Running migration: Creating client_managers table...');
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS client_managers (
+            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            client_id INT UNSIGNED NOT NULL,
+            user_id INT UNSIGNED NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_client_id (client_id),
+            INDEX idx_user_id (user_id),
+            FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        `);
+        console.log('✅ Migration completed: client_managers table created');
+      }
+    } catch (clientMigErr) {
+      console.error('⚠️ Client migration error:', clientMigErr);
     }
   })
   .catch(err => {
