@@ -72,10 +72,9 @@ app.use(
     origin: [
       process.env.FRONTEND_URL,
       "http://localhost:5173",
-      "https://crm-update.netlify.app",
-      "https://crm-worksuit.netlify.app",
-      "https://crm-new-updated.netlify.app"
-     
+      "https://crm-update.netlify.app",   // ✅ Fixed
+      "https://crm-worksuit.netlify.app", // ✅ Fixed
+      "https://crm-new-updated.netlify.app" // ✅ Fixed
     ],
     credentials: true
   })
