@@ -70,36 +70,24 @@ const getAll = async (req, res) => {
 const create = async (req, res) => {
   try {
     const { user_id, project_id, task_id, hours, date, description, company_id } = req.body;
-
-    // Debug logging
-    console.log('Time log create request body:', JSON.stringify(req.body, null, 2));
-
+    
     // Get company_id from body, query, or middleware
     const companyId = company_id || req.query.company_id || req.companyId;
-
+    
     // For admin, use provided user_id; for employees, use their own userId
     const userId = user_id || req.userId;
-
+    
     if (!companyId) {
       return res.status(400).json({
         success: false,
         error: 'company_id is required'
       });
     }
-
-    // More explicit validation
-    const missingFields = [];
-    if (userId === undefined || userId === null || userId === '') missingFields.push('user_id');
-    if (project_id === undefined || project_id === null || project_id === '') missingFields.push('project_id');
-    if (hours === undefined || hours === null || hours === '') missingFields.push('hours');
-    if (date === undefined || date === null || date === '') missingFields.push('date');
-
-    if (missingFields.length > 0) {
-      console.log('Missing fields:', missingFields);
-      console.log('Received values - user_id:', user_id, 'project_id:', project_id, 'hours:', hours, 'date:', date);
+    
+    if (!userId || !project_id || !hours || !date) {
       return res.status(400).json({
         success: false,
-        error: `Missing required fields: ${missingFields.join(', ')}`
+        error: 'Missing required fields: user_id, project_id, hours, date'
       });
     }
 

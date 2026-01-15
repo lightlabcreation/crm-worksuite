@@ -1031,8 +1031,7 @@ const createLabel = async (req, res) => {
     console.error('Create project label error:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to create project label',
-      details: error.sqlMessage || error.message
+      error: 'Failed to create project label'
     });
   }
 };

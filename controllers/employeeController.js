@@ -248,13 +248,13 @@ const getById = async (req, res) => {
     const { id } = req.params;
 
     const [employees] = await pool.execute(
-      `SELECT e.*,
+      `SELECT e.*, 
               u.name, u.email, u.phone, u.address, u.country, u.email_notifications, u.role as user_role, u.status, u.avatar,
               u.company_id,
               c.name as company_name,
-              d.name as department_name,
+              d.name as department_name, 
               p.name as position_name,
-              s.name as shift_name,
+              s.shift_name,
               u2.name as reporting_to_name
        FROM employees e
        JOIN users u ON e.user_id = u.id

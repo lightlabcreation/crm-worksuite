@@ -5,17 +5,6 @@
 const pool = require('../config/db');
 const bcrypt = require('bcryptjs');
 
-// Generate random color for labels
-const generateLabelColor = () => {
-  const colors = [
-    '#ef4444', '#f97316', '#f59e0b', '#eab308', '#84cc16',
-    '#22c55e', '#10b981', '#14b8a6', '#06b6d4', '#0ea5e9',
-    '#3b82f6', '#6366f1', '#8b5cf6', '#a855f7', '#d946ef',
-    '#ec4899', '#f43f5e', '#78716c', '#71717a', '#64748b'
-  ];
-  return colors[Math.floor(Math.random() * colors.length)];
-};
-
 /**
  * Get all clients
  * GET /api/v1/clients
@@ -333,7 +322,7 @@ const create = async (req, res) => {
       );
 
       const colorMap = new Map(existingColors.map(lc => [lc.label, lc.color]));
-      const labelValues = uniqueLabels.map(lbl => [clientId, lbl, colorMap.get(lbl) || generateLabelColor()]);
+      const labelValues = uniqueLabels.map(lbl => [clientId, lbl, colorMap.get(lbl) || '#3b82f6']);
 
       await connection.query(
         `INSERT INTO client_labels (client_id, label, color) VALUES ?`,
@@ -495,7 +484,7 @@ const update = async (req, res) => {
         );
 
         const colorMap = new Map(labelColors.map(lc => [lc.label, lc.color]));
-        const labelValues = updateFields.labels.map(lbl => [id, lbl, colorMap.get(lbl) || generateLabelColor()]);
+        const labelValues = updateFields.labels.map(lbl => [id, lbl, colorMap.get(lbl) || '#3b82f6']);
         await pool.query(
           `INSERT INTO client_labels (client_id, label, color) VALUES ?`,
           [labelValues]
@@ -1227,17 +1216,16 @@ const createLabel = async (req, res) => {
       });
     }
 
-    // Insert label with random color if not provided
-    const labelColor = color || generateLabelColor();
+    // Insert label
     await pool.execute(
       `INSERT INTO client_labels (client_id, label, color) VALUES (?, ?, ?)`,
-      [targetClientId, label, labelColor]
+      [targetClientId, label, color || null]
     );
 
     res.json({
       success: true,
       message: 'Label created successfully',
-      data: { label, color: labelColor }
+      data: { label, color: color || null }
     });
   } catch (error) {
     console.error('Create label error:', error);
@@ -1339,7 +1327,7 @@ const updateClientLabels = async (req, res) => {
       );
 
       const colorMap = new Map(labelColors.map(lc => [lc.label, lc.color]));
-      const labelValues = labels.map(lbl => [id, lbl, colorMap.get(lbl) || generateLabelColor()]);
+      const labelValues = labels.map(lbl => [id, lbl, colorMap.get(lbl) || null]);
       await pool.query(
         `INSERT INTO client_labels (client_id, label, color) VALUES ?`,
         [labelValues]
