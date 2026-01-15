@@ -538,6 +538,222 @@ const getEmployeeAttendance = async (req, res) => {
   }
 };
 
+/**
+ * Check In - Clock in for the current user
+ * POST /api/v1/attendance/check-in
+ * Uses schema: attendance(company_id, user_id, date, check_in, check_out, status)
+ */
+const checkIn = async (req, res) => {
+  try {
+    const companyId = req.body.company_id || req.query.company_id || req.companyId;
+    const userId = req.body.user_id || req.userId;
+
+    if (!companyId || !userId) {
+      return res.status(400).json({
+        success: false,
+        error: 'company_id and user_id are required'
+      });
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+    const currentTime = new Date().toTimeString().split(' ')[0]; // HH:MM:SS format
+
+    // Check if already checked in today
+    const [existing] = await pool.execute(
+      `SELECT id, check_in, check_out FROM attendance
+       WHERE user_id = ? AND date = ? AND company_id = ?`,
+      [userId, today, companyId]
+    );
+
+    if (existing.length > 0 && existing[0].check_in) {
+      return res.json({
+        success: true,
+        message: 'Already clocked in today',
+        data: {
+          id: existing[0].id,
+          check_in: existing[0].check_in,
+          check_out: existing[0].check_out,
+          isClockedIn: !existing[0].check_out
+        }
+      });
+    }
+
+    let attendanceId;
+
+    if (existing.length > 0) {
+      // Update existing record with check_in
+      await pool.execute(
+        `UPDATE attendance SET check_in = ?, status = 'Present', updated_at = NOW() WHERE id = ?`,
+        [currentTime, existing[0].id]
+      );
+      attendanceId = existing[0].id;
+    } else {
+      // Create new attendance record
+      const [result] = await pool.execute(
+        `INSERT INTO attendance (company_id, user_id, date, status, check_in)
+         VALUES (?, ?, ?, 'Present', ?)`,
+        [companyId, userId, today, currentTime]
+      );
+      attendanceId = result.insertId;
+    }
+
+    res.json({
+      success: true,
+      message: 'Clocked in successfully',
+      data: {
+        id: attendanceId,
+        check_in: currentTime,
+        check_out: null,
+        isClockedIn: true
+      }
+    });
+  } catch (error) {
+    console.error('Check in error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to clock in',
+      details: error.message
+    });
+  }
+};
+
+/**
+ * Check Out - Clock out for the current user
+ * POST /api/v1/attendance/check-out
+ * Uses schema: attendance(company_id, user_id, date, check_in, check_out, status)
+ */
+const checkOut = async (req, res) => {
+  try {
+    const companyId = req.body.company_id || req.query.company_id || req.companyId;
+    const userId = req.body.user_id || req.userId;
+
+    if (!companyId || !userId) {
+      return res.status(400).json({
+        success: false,
+        error: 'company_id and user_id are required'
+      });
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+    const currentTime = new Date().toTimeString().split(' ')[0]; // HH:MM:SS format
+
+    // Find today's attendance record
+    const [existing] = await pool.execute(
+      `SELECT id, check_in, check_out FROM attendance
+       WHERE user_id = ? AND date = ? AND company_id = ?`,
+      [userId, today, companyId]
+    );
+
+    if (existing.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'No clock in record found for today. Please clock in first.'
+      });
+    }
+
+    if (!existing[0].check_in) {
+      return res.status(400).json({
+        success: false,
+        error: 'You must clock in before clocking out'
+      });
+    }
+
+    if (existing[0].check_out) {
+      return res.json({
+        success: true,
+        message: 'Already clocked out today',
+        data: {
+          id: existing[0].id,
+          check_in: existing[0].check_in,
+          check_out: existing[0].check_out,
+          isClockedIn: false
+        }
+      });
+    }
+
+    // Update with check_out time
+    await pool.execute(
+      `UPDATE attendance SET check_out = ?, updated_at = NOW() WHERE id = ?`,
+      [currentTime, existing[0].id]
+    );
+
+    res.json({
+      success: true,
+      message: 'Clocked out successfully',
+      data: {
+        id: existing[0].id,
+        check_in: existing[0].check_in,
+        check_out: currentTime,
+        isClockedIn: false
+      }
+    });
+  } catch (error) {
+    console.error('Check out error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to clock out',
+      details: error.message
+    });
+  }
+};
+
+/**
+ * Get today's clock status for the current user
+ * GET /api/v1/attendance/today-status
+ * Uses schema: attendance(company_id, user_id, date, check_in, check_out, status)
+ */
+const getTodayStatus = async (req, res) => {
+  try {
+    const companyId = req.query.company_id || req.companyId;
+    const userId = req.query.user_id || req.userId;
+
+    if (!companyId || !userId) {
+      return res.status(400).json({
+        success: false,
+        error: 'company_id and user_id are required'
+      });
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+
+    // Find today's attendance record
+    const [records] = await pool.execute(
+      `SELECT id, check_in, check_out, status FROM attendance
+       WHERE user_id = ? AND date = ? AND company_id = ?`,
+      [userId, today, companyId]
+    );
+
+    if (records.length === 0) {
+      return res.json({
+        success: true,
+        data: {
+          isClockedIn: false,
+          check_in: null,
+          check_out: null
+        }
+      });
+    }
+
+    const record = records[0];
+    res.json({
+      success: true,
+      data: {
+        id: record.id,
+        isClockedIn: record.check_in && !record.check_out,
+        check_in: record.check_in,
+        check_out: record.check_out,
+        status: record.status
+      }
+    });
+  } catch (error) {
+    console.error('Get today status error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch today status'
+    });
+  }
+};
+
 module.exports = {
   getAll,
   getSummary,
@@ -545,5 +761,8 @@ module.exports = {
   bulkMarkAttendance,
   getById,
   deleteAttendance,
-  getEmployeeAttendance
+  getEmployeeAttendance,
+  checkIn,
+  checkOut,
+  getTodayStatus
 };

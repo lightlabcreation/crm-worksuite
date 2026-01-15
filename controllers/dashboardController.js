@@ -131,12 +131,14 @@ const getCompleteDashboard = async (req, res) => {
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
     // ===== 1. SUMMARY DATA =====
+    // Get clock data for the user from attendance table
     const [clockInData] = await safeQuery(
-      `SELECT check_in, check_out, TIMEDIFF(COALESCE(check_out, NOW()), check_in) as duration 
-       FROM attendance 
-       WHERE user_id = ? AND DATE(check_in) = ? AND is_deleted = 0 
+      `SELECT check_in, check_out,
+              TIMEDIFF(COALESCE(check_out, CURTIME()), check_in) as duration
+       FROM attendance
+       WHERE user_id = ? AND date = ? AND company_id = ?
        ORDER BY check_in DESC LIMIT 1`,
-      [userId, today],
+      [userId, today, companyId],
       []
     );
 
@@ -424,15 +426,18 @@ const getCompleteDashboard = async (req, res) => {
     // Format clock time
     let clockTime = '00:00:00';
     let isClockedIn = false;
-    if (clockInData) {
+    let clockInTime = null;
+    if (clockInData && clockInData.check_in) {
       isClockedIn = !clockInData.check_out;
       clockTime = clockInData.duration || '00:00:00';
+      clockInTime = clockInData.check_in;
     }
 
     // Build final response
     const dashboardData = {
       summary: {
         clockIn: clockTime,
+        clockInTime: clockInTime,
         isClockedIn: isClockedIn,
         openTasks: openTasksCount?.total || 0,
         eventsToday: eventsTodayCount?.total || 0,

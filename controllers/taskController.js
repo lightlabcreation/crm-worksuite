@@ -491,12 +491,15 @@ const create = async (req, res) => {
     // ===============================
     const allAssignees = [];
     if (assign_to) {
-      allAssignees.push(parseInt(assign_to));
+      const uid = parseInt(assign_to);
+      if (!isNaN(uid) && uid > 0) {
+        allAssignees.push(uid);
+      }
     }
     if (Array.isArray(collaborators) && collaborators.length > 0) {
       collaborators.forEach(userId => {
         const uid = parseInt(userId);
-        if (!allAssignees.includes(uid)) {
+        if (!isNaN(uid) && uid > 0 && !allAssignees.includes(uid)) {
           allAssignees.push(uid);
         }
       });
@@ -504,18 +507,28 @@ const create = async (req, res) => {
     if (Array.isArray(assigned_to) && assigned_to.length > 0) {
       assigned_to.forEach(userId => {
         const uid = parseInt(userId);
-        if (!allAssignees.includes(uid)) {
+        if (!isNaN(uid) && uid > 0 && !allAssignees.includes(uid)) {
           allAssignees.push(uid);
         }
       });
     }
 
+    // Validate that all user IDs exist in the users table before inserting
     if (allAssignees.length > 0) {
-      const assigneeValues = allAssignees.map(userId => [taskId, userId]);
-      await pool.query(
-        `INSERT INTO task_assignees (task_id, user_id) VALUES ?`,
-        [assigneeValues]
+      const [validUsers] = await pool.execute(
+        `SELECT id FROM users WHERE id IN (${allAssignees.map(() => '?').join(',')})`,
+        allAssignees
       );
+      const validUserIds = validUsers.map(u => u.id);
+      const filteredAssignees = allAssignees.filter(uid => validUserIds.includes(uid));
+
+      if (filteredAssignees.length > 0) {
+        const assigneeValues = filteredAssignees.map(userId => [taskId, userId]);
+        await pool.query(
+          `INSERT INTO task_assignees (task_id, user_id) VALUES ?`,
+          [assigneeValues]
+        );
+      }
     }
 
     // ===============================
@@ -732,12 +745,22 @@ const update = async (req, res) => {
         });
       }
 
+      // Validate that all user IDs exist in the users table before inserting
       if (allAssignees.length > 0) {
-        const assigneeValues = allAssignees.map(userId => [id, userId]);
-        await pool.query(
-          `INSERT INTO task_assignees (task_id, user_id) VALUES ?`,
-          [assigneeValues]
+        const [validUsers] = await pool.execute(
+          `SELECT id FROM users WHERE id IN (${allAssignees.map(() => '?').join(',')})`,
+          allAssignees
         );
+        const validUserIds = validUsers.map(u => u.id);
+        const filteredAssignees = allAssignees.filter(uid => validUserIds.includes(uid));
+
+        if (filteredAssignees.length > 0) {
+          const assigneeValues = filteredAssignees.map(userId => [id, userId]);
+          await pool.query(
+            `INSERT INTO task_assignees (task_id, user_id) VALUES ?`,
+            [assigneeValues]
+          );
+        }
       }
     }
 

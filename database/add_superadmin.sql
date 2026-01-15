@@ -7,28 +7,28 @@ ALTER TABLE `users`
 MODIFY COLUMN `role` ENUM('ADMIN','EMPLOYEE','CLIENT','SUPERADMIN') NOT NULL DEFAULT 'EMPLOYEE';
 
 -- Step 2: Create Super Admin User
--- Password: SuperAdmin@123 (hashed with bcrypt)
+-- Password: 123456 (hashed with bcrypt)
 INSERT INTO `users` (
-  `company_id`, 
-  `name`, 
-  `email`, 
-  `password`, 
-  `role`, 
-  `status`, 
-  `created_at`, 
-  `updated_at`, 
+  `company_id`,
+  `name`,
+  `email`,
+  `password`,
+  `role`,
+  `status`,
+  `created_at`,
+  `updated_at`,
   `is_deleted`
 ) VALUES (
-  1, 
-  'Super Admin', 
-  'superadmin@crmapp.com', 
-  '$2a$10$GfWvRNlTDerXb5Ux4p/BPuiCI8uVAb/X1vSqg1CNKl7/MhOYvL4y.', 
-  'SUPERADMIN', 
-  'Active', 
-  NOW(), 
-  NOW(), 
+  1,
+  'Super Admin',
+  'superadmin@gmail.com',
+  '$2a$10$QR8/Bnb5q6nbyDb3Valf1eH40ErrQfztJUpIyq940BdGs6foL2zea',
+  'SUPERADMIN',
+  'Active',
+  NOW(),
+  NOW(),
   0
-) ON DUPLICATE KEY UPDATE 
+) ON DUPLICATE KEY UPDATE
   `role` = 'SUPERADMIN',
   `status` = 'Active',
   `updated_at` = NOW();
