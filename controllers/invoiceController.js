@@ -105,8 +105,8 @@ const getAll = async (req, res) => {
     if (client_id) {
       // First find the client record by user_id (owner_id) or direct id
       const [clients] = await pool.execute(
-        'SELECT id FROM clients WHERE (owner_id = ? OR id = ?) AND company_id = ? AND is_deleted = 0 LIMIT 1',
-        [client_id, client_id, filterCompanyId || 1]
+        'SELECT id FROM clients WHERE (owner_id = ? OR id = ?) AND (company_id = ? OR ? IS NULL) AND is_deleted = 0 LIMIT 1',
+        [client_id, client_id, filterCompanyId || null, filterCompanyId || null]
       );
       
       if (clients.length > 0) {
@@ -114,10 +114,10 @@ const getAll = async (req, res) => {
         whereClause += ' AND i.client_id = ?';
         params.push(clients[0].id);
       } else {
-        // If no client record found, still show invoices with null client_id
-        // This handles cases where invoices are created from orders
-        // and client_id might be null or the user_id doesn't have a client record
-        whereClause += ' AND i.client_id IS NULL';
+        // If no client record found by owner_id, try filtering directly by client_id
+        // This handles cases where client_id is passed directly
+        whereClause += ' AND i.client_id = ?';
+        params.push(parseInt(client_id));
       }
     }
     

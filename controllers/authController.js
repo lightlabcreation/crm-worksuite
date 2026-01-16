@@ -120,12 +120,32 @@ const login = async (req, res) => {
       console.log('No company_id for user:', user.id);
     }
 
+    // For CLIENT users, get their client_id from the clients table
+    let client_id = null;
+    if (normalizedRole === 'CLIENT') {
+      try {
+        const [clients] = await pool.execute(
+          `SELECT id FROM clients WHERE owner_id = ? AND is_deleted = 0 LIMIT 1`,
+          [user.id]
+        );
+        if (clients.length > 0) {
+          client_id = clients[0].id;
+          console.log('Client ID fetched:', client_id, 'for user_id:', user.id);
+        } else {
+          console.warn('No client record found for user_id:', user.id);
+        }
+      } catch (err) {
+        console.error('Error fetching client ID:', err);
+      }
+    }
+
     const responseData = {
       success: true,
       token,
       user: {
         id: user.id,
         company_id: user.company_id,
+        client_id: client_id,
         name: user.name,
         email: user.email,
         role: user.role,
@@ -211,10 +231,28 @@ const getCurrentUser = async (req, res) => {
     }
 
     const user = users[0];
+    
+    // For CLIENT users, get their client_id from the clients table
+    let client_id = null;
+    if (user.role && user.role.toUpperCase() === 'CLIENT') {
+      try {
+        const [clients] = await pool.execute(
+          `SELECT id FROM clients WHERE owner_id = ? AND is_deleted = 0 LIMIT 1`,
+          [user.id]
+        );
+        if (clients.length > 0) {
+          client_id = clients[0].id;
+        }
+      } catch (err) {
+        console.error('Error fetching client ID:', err);
+      }
+    }
+    
     // Format response
     const userData = {
       id: user.id,
       company_id: user.company_id,
+      client_id: client_id,
       name: user.name,
       email: user.email,
       role: user.role,

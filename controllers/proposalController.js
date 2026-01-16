@@ -342,10 +342,18 @@ const create = async (req, res) => {
     else if (status === 'draft') mappedStatus = 'Draft';
     else if (status) mappedStatus = status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
 
+    // Map discount_type to valid ENUM values: '%' or 'fixed'
+    let mappedDiscountType = '%';
+    if (discount_type === 'fixed' || discount_type === 'Fixed' || discount_type === 'amount' || discount_type === 'flat') {
+      mappedDiscountType = 'fixed';
+    } else if (discount_type === '%' || discount_type === 'percent' || discount_type === 'percentage') {
+      mappedDiscountType = '%';
+    }
+
     // Calculate totals if items exist
     let totals = { sub_total: 0, discount_amount: 0, tax_amount: 0, total: 0 };
     if (items && Array.isArray(items) && items.length > 0) {
-      totals = calculateTotals(items, discount, discount_type);
+      totals = calculateTotals(items, discount, mappedDiscountType);
     }
 
     // Use title in description if no description provided
@@ -373,7 +381,7 @@ const create = async (req, res) => {
         finalDescription,
         (terms && terms !== '') ? terms : 'Thank you for your business.',
         discount || 0,
-        discount_type || '%',
+        mappedDiscountType,
         totals.sub_total,
         totals.discount_amount,
         totals.tax_amount,
@@ -470,6 +478,16 @@ const update = async (req, res) => {
       mappedStatus = status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
     }
 
+    // Map discount_type to valid ENUM values: '%' or 'fixed'
+    let mappedDiscountType = null;
+    if (discount_type !== undefined) {
+      if (discount_type === 'fixed' || discount_type === 'Fixed' || discount_type === 'amount' || discount_type === 'flat') {
+        mappedDiscountType = 'fixed';
+      } else {
+        mappedDiscountType = '%';
+      }
+    }
+
     const connection = await pool.getConnection();
     try {
       await connection.beginTransaction();
@@ -489,7 +507,7 @@ const update = async (req, res) => {
       if (terms !== undefined) updateFields.push('terms = ?'), updateValues.push(terms);
       if (mappedStatus !== null) updateFields.push('status = ?'), updateValues.push(mappedStatus);
       if (discount !== undefined) updateFields.push('discount = ?'), updateValues.push(discount);
-      if (discount_type !== undefined) updateFields.push('discount_type = ?'), updateValues.push(discount_type);
+      if (mappedDiscountType !== null) updateFields.push('discount_type = ?'), updateValues.push(mappedDiscountType);
 
       // Handle Items if provided
       if (items && Array.isArray(items)) {
@@ -517,7 +535,7 @@ const update = async (req, res) => {
         }
 
         // Calculate Totals
-        const totals = calculateTotals(items, discount, discount_type); // Make sure calculateTotals is accessible or define it inside
+        const totals = calculateTotals(items, discount, mappedDiscountType || '%'); // Make sure calculateTotals is accessible or define it inside
 
         updateFields.push('sub_total = ?'); updateValues.push(totals.sub_total);
         updateFields.push('discount_amount = ?'); updateValues.push(totals.discount_amount);
