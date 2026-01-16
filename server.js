@@ -42,6 +42,7 @@ const socialMediaIntegrationRoutes = require('./routes/socialMediaIntegrationRou
 const reportRoutes = require('./routes/reportRoutes');
 const emailTemplateRoutes = require('./routes/emailTemplateRoutes');
 const financeTemplateRoutes = require('./routes/financeTemplateRoutes');
+const projectTemplateRoutes = require('./routes/projectTemplateRoutes');
 const creditNoteRoutes = require('./routes/creditNoteRoutes');
 const superAdminRoutes = require('./routes/superAdminRoutes');
 const bankAccountRoutes = require('./routes/bankAccountRoutes');
@@ -64,7 +65,6 @@ const API_VERSION = process.env.API_VERSION || 'v1';
 
 // Security
 app.use(helmet());
-
 
 // CORS - Allow multiple origins
 app.use(
@@ -150,6 +150,7 @@ app.use(`${apiBase}/social-media-integrations`, socialMediaIntegrationRoutes);
 app.use(`${apiBase}/reports`, reportRoutes);
 app.use(`${apiBase}/email-templates`, emailTemplateRoutes);
 app.use(`${apiBase}/finance-templates`, financeTemplateRoutes);
+app.use(`${apiBase}/project-templates`, projectTemplateRoutes);
 app.use(`${apiBase}/credit-notes`, creditNoteRoutes);
 app.use(`${apiBase}/superadmin`, superAdminRoutes);
 app.use(`${apiBase}/bank-accounts`, bankAccountRoutes);

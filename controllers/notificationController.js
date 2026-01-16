@@ -188,15 +188,17 @@ const create = async (req, res) => {
 
     const [result] = await pool.execute(
       `INSERT INTO notifications (
-        company_id, user_id, type, title, message, link, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+        company_id, user_id, type, title, message, link, related_entity_type, related_entity_id, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
       [
         companyId || null,
         user_id,
         type,
         title,
         message,
-        link || null
+        link || null,
+        related_entity_type || null,
+        related_entity_id || null
       ]
     );
 

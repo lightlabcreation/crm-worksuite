@@ -543,10 +543,663 @@ const getReportsSummary = async (req, res) => {
   }
 };
 
+/**
+ * Get Expenses Summary Report
+ * GET /api/v1/reports/expenses-summary
+ */
+const getExpensesSummary = async (req, res) => {
+  try {
+    const { company_id, year, start_date, end_date, category, view = 'yearly' } = req.query;
+    const filterCompanyId = company_id || req.companyId || 1;
+    const filterYear = year || new Date().getFullYear();
+
+    let whereClause = 'WHERE e.company_id = ? AND e.is_deleted = 0';
+    const params = [filterCompanyId];
+
+    if (view === 'yearly') {
+      whereClause += ' AND YEAR(e.created_at) = ?';
+      params.push(filterYear);
+    } else if (view === 'custom' && start_date && end_date) {
+      whereClause += ' AND DATE(e.created_at) BETWEEN ? AND ?';
+      params.push(start_date, end_date);
+    } else if (view === 'monthly') {
+      whereClause += ' AND YEAR(e.created_at) = ?';
+      params.push(filterYear);
+    }
+
+    if (category) {
+      whereClause += ' AND ei.name = ?';
+      params.push(category);
+    }
+
+    // Get expenses by category
+    const [expenses] = await pool.execute(
+      `SELECT
+        COALESCE(ei.name, 'Uncategorized') as category,
+        COUNT(*) as count,
+        COALESCE(SUM(e.sub_total), 0) as amount,
+        COALESCE(SUM(e.tax_amount), 0) as tax,
+        0 as second_tax,
+        COALESCE(SUM(e.total), 0) as total
+       FROM expenses e
+       LEFT JOIN expense_items ei ON e.id = ei.expense_id
+       ${whereClause}
+       GROUP BY COALESCE(ei.name, 'Uncategorized')
+       ORDER BY total DESC`,
+      params
+    );
+
+    // Get monthly breakdown for chart
+    const [monthlyData] = await pool.execute(
+      `SELECT
+        DATE_FORMAT(e.created_at, '%b') as month,
+        DATE_FORMAT(e.created_at, '%Y-%m') as month_key,
+        COALESCE(SUM(e.total), 0) as total
+       FROM expenses e
+       WHERE e.company_id = ? AND e.is_deleted = 0 AND YEAR(e.created_at) = ?
+       GROUP BY DATE_FORMAT(e.created_at, '%b'), DATE_FORMAT(e.created_at, '%Y-%m')
+       ORDER BY month_key`,
+      [filterCompanyId, filterYear]
+    );
+
+    // Get category breakdown for pie chart
+    const [categoryData] = await pool.execute(
+      `SELECT
+        COALESCE(ei.name, 'Uncategorized') as name,
+        COALESCE(SUM(e.total), 0) as value
+       FROM expenses e
+       LEFT JOIN expense_items ei ON e.id = ei.expense_id
+       WHERE e.company_id = ? AND e.is_deleted = 0 AND YEAR(e.created_at) = ?
+       GROUP BY COALESCE(ei.name, 'Uncategorized')
+       ORDER BY value DESC
+       LIMIT 10`,
+      [filterCompanyId, filterYear]
+    );
+
+    res.json({
+      success: true,
+      data: expenses,
+      chartData: {
+        monthly: monthlyData,
+        category: categoryData
+      },
+      totals: {
+        amount: expenses.reduce((sum, e) => sum + parseFloat(e.amount || 0), 0),
+        tax: expenses.reduce((sum, e) => sum + parseFloat(e.tax || 0), 0),
+        second_tax: 0,
+        total: expenses.reduce((sum, e) => sum + parseFloat(e.total || 0), 0)
+      }
+    });
+  } catch (error) {
+    console.error('Get expenses summary error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+/**
+ * Get Invoices Summary Report
+ * GET /api/v1/reports/invoices-summary
+ */
+const getInvoicesSummary = async (req, res) => {
+  try {
+    const { company_id, year, start_date, end_date, currency, client_id, view = 'yearly' } = req.query;
+    const filterCompanyId = company_id || req.companyId || 1;
+    const filterYear = year || new Date().getFullYear();
+
+    let whereClause = 'WHERE i.company_id = ? AND i.is_deleted = 0';
+    const params = [filterCompanyId];
+
+    if (view === 'yearly') {
+      whereClause += ' AND YEAR(i.invoice_date) = ?';
+      params.push(filterYear);
+    } else if (view === 'custom' && start_date && end_date) {
+      whereClause += ' AND DATE(i.invoice_date) BETWEEN ? AND ?';
+      params.push(start_date, end_date);
+    } else if (view === 'monthly') {
+      whereClause += ' AND YEAR(i.invoice_date) = ?';
+      params.push(filterYear);
+    }
+
+    if (currency) {
+      whereClause += ' AND i.currency = ?';
+      params.push(currency);
+    }
+
+    if (client_id) {
+      whereClause += ' AND i.client_id = ?';
+      params.push(client_id);
+    }
+
+    // Get invoices grouped by client
+    const [invoices] = await pool.execute(
+      `SELECT
+        COALESCE(c.company_name, u.name, 'Unknown Client') as client_name,
+        c.id as client_id,
+        COUNT(*) as count,
+        COALESCE(SUM(i.total), 0) as invoice_total,
+        COALESCE(SUM(i.discount_amount), 0) as discount,
+        COALESCE(SUM(i.tax_amount), 0) as tax,
+        0 as second_tax,
+        0 as tds,
+        COALESCE(SUM(i.paid), 0) as payment_received,
+        COALESCE(SUM(i.unpaid), 0) as due
+       FROM invoices i
+       LEFT JOIN clients c ON i.client_id = c.id
+       LEFT JOIN users u ON c.owner_id = u.id
+       ${whereClause}
+       GROUP BY c.id, COALESCE(c.company_name, u.name, 'Unknown Client')
+       ORDER BY invoice_total DESC`,
+      params
+    );
+
+    res.json({
+      success: true,
+      data: invoices,
+      totals: {
+        count: invoices.reduce((sum, i) => sum + parseInt(i.count || 0), 0),
+        invoice_total: invoices.reduce((sum, i) => sum + parseFloat(i.invoice_total || 0), 0),
+        discount: invoices.reduce((sum, i) => sum + parseFloat(i.discount || 0), 0),
+        tax: invoices.reduce((sum, i) => sum + parseFloat(i.tax || 0), 0),
+        second_tax: 0,
+        tds: 0,
+        payment_received: invoices.reduce((sum, i) => sum + parseFloat(i.payment_received || 0), 0),
+        due: invoices.reduce((sum, i) => sum + parseFloat(i.due || 0), 0)
+      }
+    });
+  } catch (error) {
+    console.error('Get invoices summary error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+/**
+ * Get Invoice Details Report
+ * GET /api/v1/reports/invoice-details
+ */
+const getInvoiceDetails = async (req, res) => {
+  try {
+    const { company_id, year, start_date, end_date, currency, client_id, status } = req.query;
+    const filterCompanyId = company_id || req.companyId || 1;
+    const filterYear = year || new Date().getFullYear();
+
+    let whereClause = 'WHERE i.company_id = ? AND i.is_deleted = 0';
+    const params = [filterCompanyId];
+
+    if (year) {
+      whereClause += ' AND YEAR(i.invoice_date) = ?';
+      params.push(filterYear);
+    }
+
+    if (start_date && end_date) {
+      whereClause += ' AND DATE(i.invoice_date) BETWEEN ? AND ?';
+      params.push(start_date, end_date);
+    }
+
+    if (currency) {
+      whereClause += ' AND i.currency = ?';
+      params.push(currency);
+    }
+
+    if (client_id) {
+      whereClause += ' AND i.client_id = ?';
+      params.push(client_id);
+    }
+
+    if (status) {
+      whereClause += ' AND i.status = ?';
+      params.push(status);
+    }
+
+    const [invoices] = await pool.execute(
+      `SELECT
+        i.id,
+        i.invoice_number,
+        COALESCE(c.company_name, u.name, 'Unknown Client') as client_name,
+        c.vat_number as vat_gst,
+        i.invoice_date as bill_date,
+        i.due_date,
+        i.total as invoice_total,
+        i.discount_amount as discount,
+        i.tax_amount as tax,
+        0 as second_tax,
+        0 as tds,
+        i.paid as payment_received,
+        i.unpaid as due,
+        i.status,
+        i.currency
+       FROM invoices i
+       LEFT JOIN clients c ON i.client_id = c.id
+       LEFT JOIN users u ON c.owner_id = u.id
+       ${whereClause}
+       ORDER BY i.invoice_date DESC`,
+      params
+    );
+
+    // Calculate dynamic status
+    const processedInvoices = invoices.map(inv => {
+      let dynamicStatus = inv.status;
+      if (inv.due <= 0 && inv.payment_received > 0) {
+        dynamicStatus = 'Paid';
+      } else if (inv.payment_received > 0 && inv.due > 0) {
+        dynamicStatus = 'Partially Paid';
+      } else if (new Date(inv.due_date) < new Date() && inv.due > 0) {
+        dynamicStatus = 'Overdue';
+      } else if (inv.due > 0) {
+        dynamicStatus = 'Not Paid';
+      }
+      return { ...inv, status: dynamicStatus };
+    });
+
+    res.json({
+      success: true,
+      data: processedInvoices,
+      totals: {
+        invoice_total: invoices.reduce((sum, i) => sum + parseFloat(i.invoice_total || 0), 0),
+        discount: invoices.reduce((sum, i) => sum + parseFloat(i.discount || 0), 0),
+        tax: invoices.reduce((sum, i) => sum + parseFloat(i.tax || 0), 0),
+        payment_received: invoices.reduce((sum, i) => sum + parseFloat(i.payment_received || 0), 0),
+        due: invoices.reduce((sum, i) => sum + parseFloat(i.due || 0), 0)
+      }
+    });
+  } catch (error) {
+    console.error('Get invoice details error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+/**
+ * Get Income vs Expenses Report
+ * GET /api/v1/reports/income-vs-expenses
+ */
+const getIncomeVsExpenses = async (req, res) => {
+  try {
+    const { company_id, year, project_id } = req.query;
+    const filterCompanyId = company_id || req.companyId || 1;
+    const filterYear = year || new Date().getFullYear();
+
+    let projectFilter = '';
+    const incomeParams = [filterCompanyId, filterYear];
+    const expenseParams = [filterCompanyId, filterYear];
+
+    if (project_id) {
+      projectFilter = ' AND project_id = ?';
+      incomeParams.push(project_id);
+    }
+
+    // Get monthly income from payments
+    const [incomeData] = await pool.execute(
+      `SELECT
+        DATE_FORMAT(paid_on, '%b') as month,
+        DATE_FORMAT(paid_on, '%Y-%m') as month_key,
+        COALESCE(SUM(amount), 0) as income
+       FROM payments
+       WHERE company_id = ? AND is_deleted = 0 AND YEAR(paid_on) = ? ${projectFilter}
+       GROUP BY DATE_FORMAT(paid_on, '%b'), DATE_FORMAT(paid_on, '%Y-%m')
+       ORDER BY month_key`,
+      incomeParams
+    );
+
+    // Get monthly expenses
+    const [expenseData] = await pool.execute(
+      `SELECT
+        DATE_FORMAT(created_at, '%b') as month,
+        DATE_FORMAT(created_at, '%Y-%m') as month_key,
+        COALESCE(SUM(total), 0) as expense
+       FROM expenses
+       WHERE company_id = ? AND is_deleted = 0 AND YEAR(created_at) = ?
+       GROUP BY DATE_FORMAT(created_at, '%b'), DATE_FORMAT(created_at, '%Y-%m')
+       ORDER BY month_key`,
+      expenseParams
+    );
+
+    // Merge data by month
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const chartData = months.map((month, idx) => {
+      const monthKey = `${filterYear}-${String(idx + 1).padStart(2, '0')}`;
+      const income = incomeData.find(d => d.month_key === monthKey);
+      const expense = expenseData.find(d => d.month_key === monthKey);
+      return {
+        month,
+        income: parseFloat(income?.income || 0),
+        expense: parseFloat(expense?.expense || 0)
+      };
+    });
+
+    const totalIncome = chartData.reduce((sum, d) => sum + d.income, 0);
+    const totalExpense = chartData.reduce((sum, d) => sum + d.expense, 0);
+
+    res.json({
+      success: true,
+      data: chartData,
+      summary: {
+        total_income: totalIncome,
+        total_expense: totalExpense,
+        profit: totalIncome - totalExpense,
+        profit_percentage: totalIncome > 0 ? ((totalIncome - totalExpense) / totalIncome * 100).toFixed(2) : 0
+      }
+    });
+  } catch (error) {
+    console.error('Get income vs expenses error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+/**
+ * Get Payments Summary Report
+ * GET /api/v1/reports/payments-summary
+ */
+const getPaymentsSummary = async (req, res) => {
+  try {
+    const { company_id, year, payment_method, view = 'monthly' } = req.query;
+    const filterCompanyId = company_id || req.companyId || 1;
+    const filterYear = year || new Date().getFullYear();
+
+    let whereClause = 'WHERE p.company_id = ? AND p.is_deleted = 0 AND YEAR(p.paid_on) = ?';
+    const params = [filterCompanyId, filterYear];
+
+    if (payment_method) {
+      whereClause += ' AND (p.payment_gateway = ? OR p.offline_payment_method = ?)';
+      params.push(payment_method, payment_method);
+    }
+
+    if (view === 'monthly') {
+      // Monthly summary
+      const [payments] = await pool.execute(
+        `SELECT
+          DATE_FORMAT(p.paid_on, '%b %Y') as period,
+          DATE_FORMAT(p.paid_on, '%Y-%m') as month_key,
+          COUNT(*) as count,
+          COALESCE(SUM(p.amount), 0) as amount
+         FROM payments p
+         ${whereClause}
+         GROUP BY DATE_FORMAT(p.paid_on, '%b %Y'), DATE_FORMAT(p.paid_on, '%Y-%m')
+         ORDER BY month_key DESC`,
+        params
+      );
+
+      res.json({
+        success: true,
+        data: payments,
+        totals: {
+          count: payments.reduce((sum, p) => sum + parseInt(p.count || 0), 0),
+          amount: payments.reduce((sum, p) => sum + parseFloat(p.amount || 0), 0)
+        }
+      });
+    } else {
+      // Client summary
+      const [payments] = await pool.execute(
+        `SELECT
+          COALESCE(c.company_name, u.name, 'Unknown Client') as client_name,
+          c.id as client_id,
+          COUNT(*) as count,
+          COALESCE(SUM(p.amount), 0) as amount
+         FROM payments p
+         LEFT JOIN invoices i ON p.invoice_id = i.id
+         LEFT JOIN clients c ON i.client_id = c.id
+         LEFT JOIN users u ON c.owner_id = u.id
+         ${whereClause}
+         GROUP BY c.id, COALESCE(c.company_name, u.name, 'Unknown Client')
+         ORDER BY amount DESC`,
+        params
+      );
+
+      res.json({
+        success: true,
+        data: payments,
+        totals: {
+          count: payments.reduce((sum, p) => sum + parseInt(p.count || 0), 0),
+          amount: payments.reduce((sum, p) => sum + parseFloat(p.amount || 0), 0)
+        }
+      });
+    }
+  } catch (error) {
+    console.error('Get payments summary error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+/**
+ * Get Timesheets Report
+ * GET /api/v1/reports/timesheets
+ */
+const getTimesheetsReport = async (req, res) => {
+  try {
+    const { company_id, year, start_date, end_date, user_id, project_id, client_id, view = 'details' } = req.query;
+    const filterCompanyId = company_id || req.companyId || 1;
+
+    let whereClause = 'WHERE tl.company_id = ? AND tl.is_deleted = 0';
+    const params = [filterCompanyId];
+
+    if (start_date && end_date) {
+      whereClause += ' AND tl.date BETWEEN ? AND ?';
+      params.push(start_date, end_date);
+    } else if (year) {
+      whereClause += ' AND YEAR(tl.date) = ?';
+      params.push(year);
+    }
+
+    if (user_id) {
+      whereClause += ' AND tl.user_id = ?';
+      params.push(user_id);
+    }
+
+    if (project_id) {
+      whereClause += ' AND tl.project_id = ?';
+      params.push(project_id);
+    }
+
+    if (client_id) {
+      whereClause += ' AND p.client_id = ?';
+      params.push(client_id);
+    }
+
+    if (view === 'details') {
+      const [timeLogs] = await pool.execute(
+        `SELECT
+          tl.id,
+          u.name as member,
+          p.project_name as project,
+          COALESCE(c.company_name, cu.name, '-') as client,
+          t.title as task,
+          tl.date as start_time,
+          tl.date as end_time,
+          tl.hours as total,
+          tl.description as note
+         FROM time_logs tl
+         LEFT JOIN users u ON tl.user_id = u.id
+         LEFT JOIN projects p ON tl.project_id = p.id
+         LEFT JOIN clients c ON p.client_id = c.id
+         LEFT JOIN users cu ON c.owner_id = cu.id
+         LEFT JOIN tasks t ON tl.task_id = t.id
+         ${whereClause}
+         ORDER BY tl.date DESC, tl.id DESC`,
+        params
+      );
+
+      res.json({
+        success: true,
+        data: timeLogs,
+        totals: {
+          total_hours: timeLogs.reduce((sum, t) => sum + parseFloat(t.total || 0), 0),
+          total_entries: timeLogs.length
+        }
+      });
+    } else if (view === 'summary') {
+      const [summary] = await pool.execute(
+        `SELECT
+          u.name as member,
+          COUNT(*) as entries,
+          COALESCE(SUM(tl.hours), 0) as total_hours
+         FROM time_logs tl
+         LEFT JOIN users u ON tl.user_id = u.id
+         LEFT JOIN projects p ON tl.project_id = p.id
+         ${whereClause}
+         GROUP BY tl.user_id, u.name
+         ORDER BY total_hours DESC`,
+        params
+      );
+
+      res.json({
+        success: true,
+        data: summary,
+        totals: {
+          total_hours: summary.reduce((sum, s) => sum + parseFloat(s.total_hours || 0), 0),
+          total_entries: summary.reduce((sum, s) => sum + parseInt(s.entries || 0), 0)
+        }
+      });
+    } else if (view === 'daily') {
+      const [daily] = await pool.execute(
+        `SELECT
+          tl.date,
+          u.name as member,
+          COALESCE(SUM(tl.hours), 0) as total_hours,
+          COUNT(*) as entries
+         FROM time_logs tl
+         LEFT JOIN users u ON tl.user_id = u.id
+         LEFT JOIN projects p ON tl.project_id = p.id
+         ${whereClause}
+         GROUP BY tl.date, tl.user_id, u.name
+         ORDER BY tl.date DESC`,
+        params
+      );
+
+      res.json({
+        success: true,
+        data: daily,
+        totals: {
+          total_hours: daily.reduce((sum, d) => sum + parseFloat(d.total_hours || 0), 0),
+          total_entries: daily.reduce((sum, d) => sum + parseInt(d.entries || 0), 0)
+        }
+      });
+    } else {
+      // Chart view - by project
+      const [chartData] = await pool.execute(
+        `SELECT
+          COALESCE(p.project_name, 'No Project') as name,
+          COALESCE(SUM(tl.hours), 0) as value
+         FROM time_logs tl
+         LEFT JOIN projects p ON tl.project_id = p.id
+         ${whereClause}
+         GROUP BY tl.project_id, p.project_name
+         ORDER BY value DESC
+         LIMIT 10`,
+        params
+      );
+
+      res.json({
+        success: true,
+        data: chartData,
+        totals: {
+          total_hours: chartData.reduce((sum, c) => sum + parseFloat(c.value || 0), 0)
+        }
+      });
+    }
+  } catch (error) {
+    console.error('Get timesheets report error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+/**
+ * Get Projects Report - Team Members & Clients Summary
+ * GET /api/v1/reports/projects-summary
+ */
+const getProjectsReport = async (req, res) => {
+  try {
+    const { company_id, start_date, end_date, view = 'team' } = req.query;
+    const filterCompanyId = company_id || req.companyId || 1;
+
+    let dateFilter = '';
+    const params = [filterCompanyId];
+
+    if (start_date && end_date) {
+      dateFilter = ' AND p.created_at BETWEEN ? AND ?';
+      params.push(start_date, end_date);
+    }
+
+    if (view === 'team') {
+      // Team Members Summary
+      const [teamData] = await pool.execute(
+        `SELECT
+          u.id as user_id,
+          u.name as team_member,
+          COUNT(DISTINCT CASE WHEN p.status IN ('in progress', 'In Progress', 'Active') THEN p.id END) as open_projects,
+          COUNT(DISTINCT CASE WHEN p.status IN ('completed', 'Completed', 'Done') THEN p.id END) as completed_projects,
+          COUNT(DISTINCT CASE WHEN p.status IN ('on hold', 'On Hold', 'Hold') THEN p.id END) as hold_projects,
+          (SELECT COUNT(*) FROM task_assignees ta JOIN tasks t ON ta.task_id = t.id
+           WHERE ta.user_id = u.id AND t.status NOT IN ('Done', 'done', 'Completed')) as open_tasks,
+          (SELECT COUNT(*) FROM task_assignees ta JOIN tasks t ON ta.task_id = t.id
+           WHERE ta.user_id = u.id AND t.status IN ('Done', 'done', 'Completed')) as completed_tasks,
+          COALESCE((SELECT SUM(hours) FROM time_logs WHERE user_id = u.id AND is_deleted = 0), 0) as total_time_logged
+         FROM users u
+         LEFT JOIN project_members pm ON u.id = pm.user_id
+         LEFT JOIN projects p ON pm.project_id = p.id ${dateFilter}
+         WHERE u.company_id = ? AND u.is_deleted = 0
+         GROUP BY u.id, u.name
+         HAVING open_projects > 0 OR completed_projects > 0 OR open_tasks > 0 OR completed_tasks > 0
+         ORDER BY open_projects DESC`,
+        [...params, filterCompanyId]
+      );
+
+      res.json({
+        success: true,
+        data: teamData,
+        totals: {
+          open_projects: teamData.reduce((sum, t) => sum + parseInt(t.open_projects || 0), 0),
+          completed_projects: teamData.reduce((sum, t) => sum + parseInt(t.completed_projects || 0), 0),
+          hold_projects: teamData.reduce((sum, t) => sum + parseInt(t.hold_projects || 0), 0),
+          open_tasks: teamData.reduce((sum, t) => sum + parseInt(t.open_tasks || 0), 0),
+          completed_tasks: teamData.reduce((sum, t) => sum + parseInt(t.completed_tasks || 0), 0),
+          total_time_logged: teamData.reduce((sum, t) => sum + parseFloat(t.total_time_logged || 0), 0)
+        }
+      });
+    } else {
+      // Clients Summary
+      const [clientData] = await pool.execute(
+        `SELECT
+          COALESCE(c.company_name, cu.name, 'No Client') as client_name,
+          c.id as client_id,
+          COUNT(DISTINCT CASE WHEN p.status IN ('in progress', 'In Progress', 'Active') THEN p.id END) as open_projects,
+          COUNT(DISTINCT CASE WHEN p.status IN ('completed', 'Completed', 'Done') THEN p.id END) as completed_projects,
+          COUNT(DISTINCT CASE WHEN p.status IN ('on hold', 'On Hold', 'Hold') THEN p.id END) as hold_projects,
+          COALESCE(SUM(p.budget), 0) as total_budget
+         FROM projects p
+         LEFT JOIN clients c ON p.client_id = c.id
+         LEFT JOIN users cu ON c.owner_id = cu.id
+         WHERE p.company_id = ? AND p.is_deleted = 0 ${dateFilter}
+         GROUP BY c.id, COALESCE(c.company_name, cu.name, 'No Client')
+         ORDER BY open_projects DESC`,
+        params
+      );
+
+      res.json({
+        success: true,
+        data: clientData,
+        totals: {
+          open_projects: clientData.reduce((sum, c) => sum + parseInt(c.open_projects || 0), 0),
+          completed_projects: clientData.reduce((sum, c) => sum + parseInt(c.completed_projects || 0), 0),
+          hold_projects: clientData.reduce((sum, c) => sum + parseInt(c.hold_projects || 0), 0),
+          total_budget: clientData.reduce((sum, c) => sum + parseFloat(c.total_budget || 0), 0)
+        }
+      });
+    }
+  } catch (error) {
+    console.error('Get projects report error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
 module.exports = {
   getSalesReport,
   getRevenueReport,
   getProjectStatusReport,
   getEmployeePerformanceReport,
-  getReportsSummary
+  getReportsSummary,
+  getExpensesSummary,
+  getInvoicesSummary,
+  getInvoiceDetails,
+  getIncomeVsExpenses,
+  getPaymentsSummary,
+  getTimesheetsReport,
+  getProjectsReport
 };

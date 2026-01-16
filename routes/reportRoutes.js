@@ -9,5 +9,14 @@ router.get('/projects', reportController.getProjectStatusReport);
 router.get('/employees', reportController.getEmployeePerformanceReport);
 router.get('/summary', reportController.getReportsSummary);
 
+// New report endpoints
+router.get('/expenses-summary', reportController.getExpensesSummary);
+router.get('/invoices-summary', reportController.getInvoicesSummary);
+router.get('/invoice-details', reportController.getInvoiceDetails);
+router.get('/income-vs-expenses', reportController.getIncomeVsExpenses);
+router.get('/payments-summary', reportController.getPaymentsSummary);
+router.get('/timesheets', reportController.getTimesheetsReport);
+router.get('/projects-summary', reportController.getProjectsReport);
+
 module.exports = router;
 

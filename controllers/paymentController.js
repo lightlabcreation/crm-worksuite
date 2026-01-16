@@ -38,7 +38,11 @@ const getAll = async (req, res) => {
 
     // Get all payments without pagination
     const [payments] = await pool.execute(
-      `SELECT p.*, i.invoice_number, c.company_name as client_name, comp.name as company_name,
+      `SELECT p.*, 
+       p.paid_on as payment_date,
+       COALESCE(p.payment_gateway, p.offline_payment_method) as payment_method,
+       p.remark as note,
+       i.invoice_number, c.company_name as client_name, comp.name as company_name,
        pr.project_name
        FROM payments p
        LEFT JOIN invoices i ON p.invoice_id = i.id
@@ -46,7 +50,7 @@ const getAll = async (req, res) => {
        LEFT JOIN companies comp ON p.company_id = comp.id
        LEFT JOIN projects pr ON p.project_id = pr.id
        ${whereClause}
-       ORDER BY p.created_at DESC`,
+       ORDER BY p.paid_on DESC, p.created_at DESC`,
       params
     );
 
@@ -73,7 +77,11 @@ const getById = async (req, res) => {
     const companyId = req.query.company_id || req.body.company_id || 1;
 
     const [payments] = await pool.execute(
-      `SELECT p.*, i.invoice_number, c.company_name as client_name
+      `SELECT p.*, 
+       p.paid_on as payment_date,
+       COALESCE(p.payment_gateway, p.offline_payment_method) as payment_method,
+       p.remark as note,
+       i.invoice_number, c.company_name as client_name
        FROM payments p
        LEFT JOIN invoices i ON p.invoice_id = i.id
        LEFT JOIN clients c ON i.client_id = c.id

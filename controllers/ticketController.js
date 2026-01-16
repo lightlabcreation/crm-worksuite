@@ -64,9 +64,34 @@ const getAll = async (req, res) => {
     }
 
     // For clients, show only their assigned tickets
+    // Support both actual client_id and user_id (owner_id lookup)
     if (clientId) {
-      whereClause += ' AND t.client_id = ?';
-      params.push(clientId);
+      // First check if this is an actual client id or a user id
+      const [clientCheck] = await pool.execute(
+        `SELECT id FROM clients WHERE id = ?`,
+        [clientId]
+      );
+
+      if (clientCheck.length > 0) {
+        // It's an actual client_id
+        whereClause += ' AND t.client_id = ?';
+        params.push(clientId);
+      } else {
+        // Try as owner_id (user who owns a client record)
+        const [clientByOwner] = await pool.execute(
+          `SELECT id FROM clients WHERE owner_id = ?`,
+          [clientId]
+        );
+
+        if (clientByOwner.length > 0) {
+          whereClause += ' AND t.client_id = ?';
+          params.push(clientByOwner[0].id);
+        } else {
+          // No matching client found - use original value
+          whereClause += ' AND t.client_id = ?';
+          params.push(clientId);
+        }
+      }
     }
 
     // For employees, show tickets assigned to them
@@ -172,8 +197,8 @@ const create = async (req, res) => {
       }
 
       const [result] = await pool.execute(
-        `INSERT INTO tickets (company_id, ticket_id, subject, client_id, priority, description, status, assigned_to_id, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO tickets (company_id, ticket_id, subject, client_id, priority, description, status, assigned_to_id, ticket_type, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           companyId,
           ticket_id,
@@ -183,6 +208,7 @@ const create = async (req, res) => {
           description ?? null,
           safeStatus,
           assigned_to_id ?? null,
+          ticket_type ?? null,
           userId ?? null
         ]
       );
@@ -255,9 +281,30 @@ const getById = async (req, res) => {
     }
 
     // For clients, only show their tickets
+    // Support both actual client_id and user_id (owner_id lookup)
     if (clientId) {
-      whereClause += ' AND t.client_id = ?';
-      params.push(clientId);
+      const [clientCheck] = await pool.execute(
+        `SELECT id FROM clients WHERE id = ?`,
+        [clientId]
+      );
+
+      if (clientCheck.length > 0) {
+        whereClause += ' AND t.client_id = ?';
+        params.push(clientId);
+      } else {
+        const [clientByOwner] = await pool.execute(
+          `SELECT id FROM clients WHERE owner_id = ?`,
+          [clientId]
+        );
+
+        if (clientByOwner.length > 0) {
+          whereClause += ' AND t.client_id = ?';
+          params.push(clientByOwner[0].id);
+        } else {
+          whereClause += ' AND t.client_id = ?';
+          params.push(clientId);
+        }
+      }
     }
 
     const [tickets] = await pool.execute(
@@ -311,7 +358,7 @@ const getById = async (req, res) => {
 const update = async (req, res) => {
   try {
     const { id } = req.params;
-    const { subject, priority, description, status, assigned_to_id } = req.body;
+    const { subject, priority, description, status, assigned_to_id, ticket_type } = req.body;
     const companyId = req.query.company_id || req.body.company_id || 1;
 
     // Check if ticket exists
@@ -350,6 +397,10 @@ const update = async (req, res) => {
     if (assigned_to_id !== undefined) {
       updates.push('assigned_to_id = ?');
       values.push(assigned_to_id);
+    }
+    if (ticket_type !== undefined) {
+      updates.push('ticket_type = ?');
+      values.push(ticket_type);
     }
 
     if (updates.length === 0) {

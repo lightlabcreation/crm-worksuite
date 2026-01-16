@@ -4,6 +4,9 @@
 
 const pool = require('../config/db');
 
+// Valid type values for finance templates
+const VALID_TYPES = ['invoice', 'estimate', 'expense', 'proposal'];
+
 const getAll = async (req, res) => {
   try {
     // Only filter by company_id if explicitly provided in query params or req.companyId exists
@@ -110,10 +113,26 @@ const create = async (req, res) => {
     } = req.body;
 
     // Validation
-    if (!name || !type) {
+    if (!name || !name.trim()) {
       return res.status(400).json({
         success: false,
-        error: 'name and type are required'
+        error: 'name is required and cannot be empty'
+      });
+    }
+
+    if (!type || !type.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: 'type is required and cannot be empty'
+      });
+    }
+
+    // Validate type is one of the allowed values
+    const normalizedType = type.trim().toLowerCase();
+    if (!VALID_TYPES.includes(normalizedType)) {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid type. Allowed values are: ${VALID_TYPES.join(', ')}`
       });
     }
 
@@ -129,8 +148,8 @@ const create = async (req, res) => {
       ) VALUES (?, ?, ?, ?)`,
       [
         companyId,
-        name,
-        type,
+        name.trim(),
+        normalizedType,
         templateDataJson
       ]
     );
@@ -197,17 +216,24 @@ const update = async (req, res) => {
 
     if (name !== undefined) {
       if (!name || name.trim() === '') {
-        return res.status(400).json({ error: 'Name cannot be empty' });
+        return res.status(400).json({ success: false, error: 'Name cannot be empty' });
       }
       updates.push('name = ?');
       values.push(name.trim());
     }
     if (type !== undefined) {
       if (!type || type.trim() === '') {
-        return res.status(400).json({ error: 'Type cannot be empty' });
+        return res.status(400).json({ success: false, error: 'Type cannot be empty' });
+      }
+      const normalizedType = type.trim().toLowerCase();
+      if (!VALID_TYPES.includes(normalizedType)) {
+        return res.status(400).json({
+          success: false,
+          error: `Invalid type. Allowed values are: ${VALID_TYPES.join(', ')}`
+        });
       }
       updates.push('type = ?');
-      values.push(type.trim());
+      values.push(normalizedType);
     }
     if (template_data !== undefined) {
       updates.push('template_data = ?');
@@ -435,12 +461,25 @@ const generateDefaultTemplate = (data) => {
   return html;
 };
 
+/**
+ * Get valid template types
+ * GET /api/v1/finance-templates/types
+ */
+const getTypes = async (req, res) => {
+  res.json({
+    success: true,
+    data: VALID_TYPES
+  });
+};
+
 module.exports = {
   getAll,
   getById,
   create,
   update,
   delete: deleteTemplate,
-  generateReport
+  generateReport,
+  getTypes,
+  VALID_TYPES
 };
 

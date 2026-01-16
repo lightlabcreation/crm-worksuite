@@ -899,12 +899,17 @@ const updateStatus = async (req, res) => {
       [status, id, companyId]
     );
 
-    // Log status change
-    await pool.execute(
-      `INSERT INTO lead_status_history (company_id, lead_id, old_status, new_status, changed_by, change_reason)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [companyId, id, oldStatus, status, userId, change_reason || null]
-    );
+    // Log status change (optional - don't fail if history table has issues)
+    try {
+      await pool.execute(
+        `INSERT INTO lead_status_history (company_id, lead_id, old_status, new_status, changed_by, notes)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [companyId, id, oldStatus, status, userId || 1, change_reason || null]
+      );
+    } catch (historyError) {
+      console.error('Failed to log status history:', historyError.message);
+      // Continue even if history logging fails
+    }
 
     // Get updated lead
     const [updatedLeads] = await pool.execute(
@@ -922,6 +927,7 @@ const updateStatus = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to update lead status',
+      details: error.sqlMessage || error.message
     });
   }
 };
@@ -1397,21 +1403,22 @@ const getAllLabels = async (req, res) => {
       });
     }
 
-    // Fallback: Get all unique labels from leads in this company
+    // Fallback: Get all unique labels from leads in this company (lead_labels table has no color column)
     const [labels] = await pool.execute(
-      `SELECT DISTINCT ll.label, ll.id, ll.color, ll.created_at
+      `SELECT DISTINCT ll.label, MIN(ll.id) as id, MIN(ll.created_at) as created_at
        FROM lead_labels ll
        INNER JOIN leads l ON ll.lead_id = l.id
        WHERE l.company_id = ? AND l.is_deleted = 0
+       GROUP BY ll.label
        ORDER BY ll.label ASC`,
       [companyId]
     );
 
-    // Return with name field for consistency
+    // Return with name field and default color for consistency
     const labelsWithName = labels.map(l => ({
       ...l,
       name: l.label,
-      color: l.color || '#22c55e'
+      color: '#22c55e'
     }));
 
     res.json({

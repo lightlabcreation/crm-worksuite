@@ -248,13 +248,13 @@ const getById = async (req, res) => {
     const { id } = req.params;
 
     const [employees] = await pool.execute(
-      `SELECT e.*, 
+      `SELECT e.*,
               u.name, u.email, u.phone, u.address, u.country, u.email_notifications, u.role as user_role, u.status, u.avatar,
               u.company_id,
               c.name as company_name,
-              d.name as department_name, 
+              d.name as department_name,
               p.name as position_name,
-              s.shift_name,
+              s.name as shift_name,
               u2.name as reporting_to_name
        FROM employees e
        JOIN users u ON e.user_id = u.id
@@ -550,13 +550,6 @@ const getProfile = async (req, res) => {
       `SELECT e.*, 
               u.name, u.email, u.phone, u.address, u.role as user_role, u.status, u.avatar,
               u.company_id,
-              u.emergency_contact_name,
-              u.emergency_contact_phone,
-              u.emergency_contact_relation,
-              u.bank_name,
-              u.bank_account_number,
-              u.bank_ifsc,
-              u.bank_branch,
               c.name as company_name,
               d.name as department_name, 
               p.name as position_name
@@ -614,9 +607,7 @@ const updateProfile = async (req, res) => {
     const userId = req.query.user_id || req.body.user_id || req.userId;
     const companyId = req.query.company_id || req.body.company_id || req.companyId;
     const {
-      name, email, phone, address, avatar,
-      emergency_contact_name, emergency_contact_phone, emergency_contact_relation,
-      bank_name, bank_account_number, bank_ifsc, bank_branch
+      name, email, phone, address, avatar
     } = req.body;
 
     console.log('PUT /employees/profile - userId:', userId, 'body:', req.body);
@@ -676,34 +667,6 @@ const updateProfile = async (req, res) => {
       userUpdateFields.push('avatar = ?');
       userUpdateValues.push(avatar || null);
     }
-    if (emergency_contact_name !== undefined) {
-      userUpdateFields.push('emergency_contact_name = ?');
-      userUpdateValues.push(emergency_contact_name || null);
-    }
-    if (emergency_contact_phone !== undefined) {
-      userUpdateFields.push('emergency_contact_phone = ?');
-      userUpdateValues.push(emergency_contact_phone || null);
-    }
-    if (emergency_contact_relation !== undefined) {
-      userUpdateFields.push('emergency_contact_relation = ?');
-      userUpdateValues.push(emergency_contact_relation || null);
-    }
-    if (bank_name !== undefined) {
-      userUpdateFields.push('bank_name = ?');
-      userUpdateValues.push(bank_name || null);
-    }
-    if (bank_account_number !== undefined) {
-      userUpdateFields.push('bank_account_number = ?');
-      userUpdateValues.push(bank_account_number || null);
-    }
-    if (bank_ifsc !== undefined) {
-      userUpdateFields.push('bank_ifsc = ?');
-      userUpdateValues.push(bank_ifsc || null);
-    }
-    if (bank_branch !== undefined) {
-      userUpdateFields.push('bank_branch = ?');
-      userUpdateValues.push(bank_branch || null);
-    }
 
     if (userUpdateFields.length > 0) {
       userUpdateFields.push('updated_at = CURRENT_TIMESTAMP');
@@ -720,13 +683,6 @@ const updateProfile = async (req, res) => {
       `SELECT e.*, 
               u.name, u.email, u.phone, u.address, u.role as user_role, u.status, u.avatar,
               u.company_id,
-              u.emergency_contact_name,
-              u.emergency_contact_phone,
-              u.emergency_contact_relation,
-              u.bank_name,
-              u.bank_account_number,
-              u.bank_ifsc,
-              u.bank_branch,
               c.name as company_name,
               d.name as department_name, 
               p.name as position_name
