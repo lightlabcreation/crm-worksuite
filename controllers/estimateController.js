@@ -277,7 +277,7 @@ const create = async (req, res) => {
 
     // Use estimate_date or proposal_date for the proposal_date field
     const estimateDateValue = estimate_date || proposal_date || null;
-    
+
     // Insert estimate
     // Convert all undefined/empty values to null explicitly
     const [result] = await pool.execute(
@@ -385,7 +385,7 @@ const update = async (req, res) => {
   try {
     const { id } = req.params;
     const rawFields = req.body || {};
-    
+
     // Sanitize all fields - convert undefined to null
     const updateFields = {};
     for (const [key, value] of Object.entries(rawFields)) {
@@ -394,7 +394,7 @@ const update = async (req, res) => {
 
     // Check if estimate exists
     const [estimates] = await pool.execute(
-      `SELECT id FROM estimates WHERE id = ? AND is_deleted = 0`,
+      `SELECT * FROM estimates WHERE id = ? AND is_deleted = 0`,
       [id]
     );
 
@@ -404,6 +404,8 @@ const update = async (req, res) => {
         error: 'Estimate not found'
       });
     }
+
+    const currentEstimate = estimates[0];
 
     // Build update query
     const allowedFields = [
@@ -432,10 +434,13 @@ const update = async (req, res) => {
 
     // Recalculate totals if items are updated
     if (updateFields.items) {
+      const discountVal = updateFields.discount !== undefined ? updateFields.discount : currentEstimate.discount;
+      const discountType = updateFields.discount_type !== undefined ? updateFields.discount_type : currentEstimate.discount_type;
+
       const totals = calculateTotals(
         updateFields.items,
-        updateFields.discount || 0,
-        updateFields.discount_type || '%'
+        discountVal || 0,
+        discountType || '%'
       );
       updates.push('sub_total = ?', 'discount_amount = ?', 'tax_amount = ?', 'total = ?');
       values.push(totals.sub_total, totals.discount_amount, totals.tax_amount, totals.total);
@@ -481,19 +486,38 @@ const update = async (req, res) => {
           [itemValues]
         );
       }
+    } else if (updateFields.discount !== undefined || updateFields.discount_type !== undefined) {
+      // If items are NOT updated but discount is updated, recalculate based on existing sub_total
+      const subTotal = parseFloat(currentEstimate.sub_total || 0);
+
+      const discountVal = updateFields.discount !== undefined ? updateFields.discount : currentEstimate.discount;
+      const discountType = updateFields.discount_type !== undefined ? updateFields.discount_type : currentEstimate.discount_type;
+
+      let discountAmount = 0;
+      if (discountType === '%') {
+        discountAmount = (subTotal * parseFloat(discountVal || 0)) / 100;
+      } else {
+        discountAmount = parseFloat(discountVal || 0);
+      }
+
+      const total = subTotal - discountAmount;
+
+      updates.push('discount_amount = ?', 'total = ?');
+      values.push(discountAmount, total);
+
     } else if (updateFields.amount !== undefined || updateFields.total !== undefined || updateFields.sub_total !== undefined) {
-      // If items are NOT updated but amount is updated directly
+      // If items are NOT updated but amount is updated directly (Manual Override)
       const providedTotal = parseFloat(updateFields.total || updateFields.amount || 0);
       const providedSubTotal = parseFloat(updateFields.sub_total || updateFields.amount || 0);
 
       let discountAmount = 0;
-      const discountVal = updateFields.discount !== undefined ? updateFields.discount : 0; // You might need to fetch existing discount if not provided, but for now assuming it comes with request or is 0 if simple update
-      const discountType = updateFields.discount_type || '%';
+      const discountVal = updateFields.discount !== undefined ? updateFields.discount : currentEstimate.discount;
+      const discountType = updateFields.discount_type !== undefined ? updateFields.discount_type : currentEstimate.discount_type;
 
       if (discountType === '%') {
-        discountAmount = (providedSubTotal * parseFloat(discountVal)) / 100;
+        discountAmount = (providedSubTotal * parseFloat(discountVal || 0)) / 100;
       } else {
-        discountAmount = parseFloat(discountVal);
+        discountAmount = parseFloat(discountVal || 0);
       }
 
       updates.push('sub_total = ?', 'discount_amount = ?', 'total = ?');
@@ -855,7 +879,7 @@ const convertToInvoice = async (req, res) => {
 const sendEmail = async (req, res) => {
   try {
     const { id } = req.params;
-    const { to, subject, message } = req.body;
+    const { to, subject, message, cc, bcc } = req.body;
 
     // Get estimate
     const [estimates] = await pool.execute(
@@ -878,7 +902,9 @@ const sendEmail = async (req, res) => {
 
     // Generate email HTML
     const { sendEmail: sendEmailUtil, generateEstimateEmailHTML } = require('../utils/emailService');
-    const emailHTML = generateEstimateEmailHTML(estimate, publicUrl);
+
+    // Use provided message or generate default HTML
+    const emailHTML = message || generateEstimateEmailHTML(estimate, publicUrl);
 
     // Send email
     const recipientEmail = to || estimate.client_email;
@@ -888,6 +914,8 @@ const sendEmail = async (req, res) => {
 
     await sendEmailUtil({
       to: recipientEmail,
+      cc: cc,
+      bcc: bcc,
       subject: subject || `Estimate ${estimate.estimate_number}`,
       html: emailHTML,
       text: `Please view the estimate at: ${publicUrl}`

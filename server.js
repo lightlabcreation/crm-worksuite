@@ -53,6 +53,7 @@ const pwaRoutes = require('./routes/pwaRoutes');
 const noteRoutes = require('./routes/noteRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const itemRoutes = require('./routes/itemRoutes');
+const moduleSettingsRoutes = require('./routes/moduleSettingsRoutes');
 
 
 const app = express();
@@ -65,7 +66,6 @@ const API_VERSION = process.env.API_VERSION || 'v1';
 
 // Security
 app.use(helmet());
-
 
 // CORS - Allow multiple origins
 app.use(
@@ -165,6 +165,13 @@ app.use(`${apiBase}/notes`, noteRoutes);
 app.use(`${apiBase}/orders`, orderRoutes);
 app.use(`${apiBase}/items`, itemRoutes);
 app.use(`${apiBase}/pwa`, pwaRoutes);
+app.use(`${apiBase}/module-settings`, moduleSettingsRoutes);
+
+// Notification Settings routes
+const notificationSettingsRoutes = require('./routes/notificationSettingsRoutes');
+const attendanceSettingsRoutes = require('./routes/attendanceSettingsRoutes');
+app.use(`${apiBase}/notification-settings`, notificationSettingsRoutes);
+app.use(`${apiBase}/attendance-settings`, attendanceSettingsRoutes);
 
 // 404 handler
 app.use((req, res) => {

@@ -5,6 +5,7 @@
 const express = require('express');
 const router = express.Router();
 const leadController = require('../controllers/leadController');
+const leadCallsController = require('../controllers/leadCallsController');
 
 // No authentication required - all routes are public
 
@@ -22,6 +23,12 @@ router.delete('/contacts/:id', leadController.deleteContact);
 router.get('/labels', leadController.getAllLabels);
 router.post('/labels', leadController.createLabel);
 router.delete('/labels/:label', leadController.deleteLabel);
+
+// Call logs routes - MUST come before /:id routes
+router.get('/:lead_id/calls', leadCallsController.getCallsByLeadId);
+router.post('/:lead_id/calls', leadCallsController.createCall);
+router.put('/:lead_id/calls/:call_id', leadCallsController.updateCall);
+router.delete('/:lead_id/calls/:call_id', leadCallsController.deleteCall);
 
 // Other specific routes
 router.get('/overview', leadController.getOverview);

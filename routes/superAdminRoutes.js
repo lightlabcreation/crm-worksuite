@@ -53,6 +53,10 @@ router.get('/support-tickets', superAdminController.getSupportTickets);
 // System Settings
 router.get('/settings', superAdminController.getSystemSettings);
 router.put('/settings', superAdminController.updateSystemSettings);
+router.post('/settings/test-email', superAdminController.testEmailSettings);
+
+// Audit Logs
+router.get('/audit-logs', superAdminController.getAuditLogs);
 
 module.exports = router;
 

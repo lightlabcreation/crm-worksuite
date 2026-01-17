@@ -189,7 +189,8 @@ const create = async (req, res) => {
       });
     }
 
-    const companyId = req.body.company_id || req.query.company_id;
+    // Handle both company_id and Company_id (case insensitive)
+    const companyId = req.body.company_id || req.body.Company_id || req.query.company_id;
     
     if (!companyId) {
       return res.status(400).json({

@@ -5,11 +5,49 @@
 const pool = require('../config/db');
 
 /**
+ * Ensure companies table has all required columns
+ * Auto-adds email and phone columns if they don't exist
+ */
+const ensureTableColumns = async () => {
+  try {
+    // Check if email column exists
+    const [emailColumns] = await pool.execute(`
+      SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'companies' AND COLUMN_NAME = 'email'
+    `);
+    
+    if (emailColumns.length === 0) {
+      await pool.execute(`ALTER TABLE companies ADD COLUMN email VARCHAR(255) NULL AFTER name`);
+      console.log('Added email column to companies table');
+    }
+
+    // Check if phone column exists
+    const [phoneColumns] = await pool.execute(`
+      SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'companies' AND COLUMN_NAME = 'phone'
+    `);
+    
+    if (phoneColumns.length === 0) {
+      await pool.execute(`ALTER TABLE companies ADD COLUMN phone VARCHAR(50) NULL AFTER email`);
+      console.log('Added phone column to companies table');
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('Error ensuring company table columns:', error);
+    return false;
+  }
+};
+
+/**
  * Get all companies
  * GET /api/v1/companies
  */
 const getAll = async (req, res) => {
   try {
+    // Ensure table has required columns
+    await ensureTableColumns();
+    
     // Check if companyId exists (for multi-tenant filtering)
     // For super admin, they might want to see all companies
     // For regular admin, they see only their company
@@ -60,6 +98,9 @@ const getAll = async (req, res) => {
  */
 const getById = async (req, res) => {
   try {
+    // Ensure table has required columns
+    await ensureTableColumns();
+    
     const { id } = req.params;
 
     const [companies] = await pool.execute(
@@ -96,6 +137,8 @@ const create = async (req, res) => {
   try {
     const {
       name,
+      email,
+      phone,
       industry,
       website,
       address,
@@ -113,9 +156,9 @@ const create = async (req, res) => {
     }
 
     const [result] = await pool.execute(
-      `INSERT INTO companies (name, industry, website, address, notes, logo, currency, timezone)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [name, industry || null, website || null, address || null, notes || null, logo || null, currency, timezone]
+      `INSERT INTO companies (name, email, phone, industry, website, address, notes, logo, currency, timezone)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [name, email || null, phone || null, industry || null, website || null, address || null, notes || null, logo || null, currency, timezone]
     );
 
     const [newCompany] = await pool.execute(
@@ -146,6 +189,8 @@ const update = async (req, res) => {
     const { id } = req.params;
     const {
       name,
+      email,
+      phone,
       industry,
       website,
       address,
@@ -176,6 +221,14 @@ const update = async (req, res) => {
     if (name !== undefined) {
       updateFields.push('name = ?');
       updateValues.push(name);
+    }
+    if (email !== undefined) {
+      updateFields.push('email = ?');
+      updateValues.push(email || null);
+    }
+    if (phone !== undefined) {
+      updateFields.push('phone = ?');
+      updateValues.push(phone || null);
     }
     if (industry !== undefined) {
       updateFields.push('industry = ?');

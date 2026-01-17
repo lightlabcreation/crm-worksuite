@@ -12,7 +12,7 @@ const settingsSchema = {
   company_website: { type: 'url', required: false },
   company_logo: { type: 'string', required: false },
   system_name: { type: 'string', required: false, maxLength: 255 },
-  default_currency: { type: 'enum', required: false, values: ['USD', 'EUR', 'GBP', 'INR', 'AED'] },
+  default_currency: { type: 'enum', required: false, values: ['USD', 'EUR', 'GBP', 'INR', 'AED', 'AUD', 'CAD', 'CHF', 'CNY', 'JPY', 'SGD', 'HKD', 'NZD', 'SEK', 'NOK', 'DKK', 'ZAR', 'BRL', 'MXN', 'KRW', 'THB', 'MYR', 'IDR', 'PHP', 'VND', 'PKR', 'BDT', 'EGP', 'SAR', 'QAR', 'KWD', 'BHD', 'OMR', 'TRY', 'RUB', 'PLN', 'CZK', 'HUF', 'RON', 'ILS', 'NGN', 'KES', 'GHS', 'TZS', 'UGX', 'MAD', 'DZD', 'TND', 'CLP', 'COP', 'PEN', 'ARS', 'VES'] },
   default_timezone: { type: 'string', required: false },
   date_format: { type: 'enum', required: false, values: ['Y-m-d', 'm/d/Y', 'd/m/Y', 'd-m-Y'] },
   time_format: { type: 'enum', required: false, values: ['H:i', 'h:i A'] },

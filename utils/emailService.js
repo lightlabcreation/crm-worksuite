@@ -34,7 +34,7 @@ const createTransporter = () => {
   // Only create transporter if credentials are provided
   if (smtpConfig.auth.user && smtpConfig.auth.pass) {
     transporter = nodemailer.createTransport(smtpConfig);
-    
+
     // Verify connection on startup
     transporter.verify((error, success) => {
       if (error) {
@@ -63,9 +63,9 @@ const sendEmail = async (options) => {
       console.log('HTML:', options.html ? 'Content provided' : 'No HTML');
       console.log('Text:', options.text || 'No text');
       console.log('Attachments:', options.attachments?.length || 0);
-      
-      return { 
-        success: true, 
+
+      return {
+        success: true,
         message: 'Email logged to console (SMTP not configured)',
         messageId: `dev-${Date.now()}`
       };
@@ -74,6 +74,8 @@ const sendEmail = async (options) => {
     const mailOptions = {
       from: process.env.SMTP_FROM || process.env.SMTP_USER || '"CRM Worksuite" <noreply@crmworksuite.com>',
       to: options.to,
+      cc: options.cc,
+      bcc: options.bcc,
       subject: options.subject,
       html: options.html || options.text,
       text: options.text || (options.html ? options.html.replace(/<[^>]*>/g, '') : ''),

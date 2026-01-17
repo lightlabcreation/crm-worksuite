@@ -4,7 +4,55 @@
 
 const pool = require('../config/db');
 
+/**
+ * Ensure email_templates table exists with all required columns
+ */
+const ensureTableExists = async () => {
+  try {
+    // Create table if not exists
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS email_templates (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        company_id INT NOT NULL,
+        name VARCHAR(255) NOT NULL,
+        subject VARCHAR(500) NOT NULL,
+        body LONGTEXT NOT NULL,
+        type VARCHAR(100) DEFAULT NULL,
+        is_deleted TINYINT(1) DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_company_id (company_id),
+        INDEX idx_type (type),
+        INDEX idx_is_deleted (is_deleted)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+
+    // Check if type column exists, add if not
+    const [columns] = await pool.execute(`
+      SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_SCHEMA = DATABASE() 
+      AND TABLE_NAME = 'email_templates' 
+      AND COLUMN_NAME = 'type'
+    `);
+
+    if (columns.length === 0) {
+      await pool.execute(`
+        ALTER TABLE email_templates 
+        ADD COLUMN type VARCHAR(100) DEFAULT NULL 
+        AFTER body
+      `);
+    }
+
+    return true;
+  } catch (error) {
+    console.error('Error ensuring email_templates table:', error);
+    return false;
+  }
+};
+
 const getAll = async (req, res) => {
+  // Ensure table exists
+  await ensureTableExists();
   try {
     // Only filter by company_id if explicitly provided in query params or req.companyId exists
     const filterCompanyId = req.query.company_id || req.body.company_id || 1;

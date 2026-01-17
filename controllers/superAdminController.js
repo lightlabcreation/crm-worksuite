@@ -905,11 +905,38 @@ const deleteUser = async (req, res) => {
 };
 
 /**
+ * Ensure company_packages table has features column
+ */
+const ensurePackageFeaturesColumn = async () => {
+  try {
+    // Check if features column exists
+    const [columns] = await pool.execute(`
+      SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_SCHEMA = DATABASE() 
+      AND TABLE_NAME = 'company_packages' 
+      AND COLUMN_NAME = 'features'
+    `);
+    
+    if (columns.length === 0) {
+      await pool.execute(`ALTER TABLE company_packages ADD COLUMN features TEXT NULL AFTER billing_cycle`);
+      console.log('Added features column to company_packages table');
+    }
+    return true;
+  } catch (error) {
+    console.error('Error ensuring features column:', error);
+    return false;
+  }
+};
+
+/**
  * Get all packages (Super Admin can see all packages)
  * GET /api/v1/superadmin/packages
  */
 const getAllPackages = async (req, res) => {
   try {
+    // Ensure features column exists
+    await ensurePackageFeaturesColumn();
+    
     const { search = '', status = '' } = req.query;
 
     let query = `
@@ -938,9 +965,44 @@ const getAllPackages = async (req, res) => {
 
     const [packages] = await pool.execute(query, queryParams);
 
+    // Parse features JSON for each package
+    const parsedPackages = packages.map(pkg => {
+      let parsedFeatures = [];
+      
+      // Debug log to see raw features value
+      console.log(`Package ${pkg.id} - Raw features:`, pkg.features, 'Type:', typeof pkg.features);
+      
+      // Try to parse features if it exists and has content
+      if (pkg.features && pkg.features !== '' && pkg.features !== 'null' && pkg.features !== '[]') {
+        if (typeof pkg.features === 'string') {
+          try {
+            const parsed = JSON.parse(pkg.features);
+            if (Array.isArray(parsed)) {
+              parsedFeatures = parsed;
+            }
+          } catch (e) {
+            console.error(`Error parsing features for package ${pkg.id}:`, e.message);
+            // If parsing fails and it's not empty, try splitting by comma
+            if (pkg.features.trim()) {
+              parsedFeatures = pkg.features.split(',').map(f => f.trim()).filter(f => f);
+            }
+          }
+        } else if (Array.isArray(pkg.features)) {
+          parsedFeatures = pkg.features;
+        }
+      }
+      
+      console.log(`Package ${pkg.id} - Parsed features:`, parsedFeatures);
+      
+      return {
+        ...pkg,
+        features: parsedFeatures
+      };
+    });
+
     res.json({
       success: true,
-      data: packages
+      data: parsedPackages
     });
   } catch (error) {
     console.error('Get all packages error:', error);
@@ -976,6 +1038,9 @@ const createPackage = async (req, res) => {
       company_id = null
     } = req.body;
 
+    // Debug log to see incoming features
+    console.log('Create Package - Incoming features:', features, 'Type:', typeof features);
+
     if (!package_name || price === undefined || price === null) {
       return res.status(400).json({
         success: false,
@@ -987,7 +1052,19 @@ const createPackage = async (req, res) => {
     // Allow NULL for system-wide packages
     let finalCompanyId = company_id || null;
 
-    const featuresJson = JSON.stringify(Array.isArray(features) ? features : []);
+    // Ensure features is properly converted to JSON string
+    let featuresArray = [];
+    if (Array.isArray(features)) {
+      featuresArray = features;
+    } else if (typeof features === 'string') {
+      try {
+        featuresArray = JSON.parse(features);
+      } catch (e) {
+        featuresArray = features.split(',').map(f => f.trim()).filter(f => f);
+      }
+    }
+    const featuresJson = JSON.stringify(featuresArray);
+    console.log('Create Package - Features to save:', featuresJson);
 
     const [result] = await pool.execute(
       `INSERT INTO company_packages 
@@ -1001,9 +1078,21 @@ const createPackage = async (req, res) => {
       [result.insertId]
     );
 
+    // Parse features for response
+    const packageData = newPackage[0];
+    if (packageData && packageData.features) {
+      try {
+        packageData.features = typeof packageData.features === 'string' 
+          ? JSON.parse(packageData.features) 
+          : packageData.features;
+      } catch (e) {
+        packageData.features = [];
+      }
+    }
+
     res.status(201).json({
       success: true,
-      data: newPackage[0],
+      data: packageData,
       message: 'Package created successfully'
     });
   } catch (error) {
@@ -1088,9 +1177,21 @@ const updatePackage = async (req, res) => {
       [id]
     );
 
+    // Parse features for response
+    const packageData = updatedPackage[0];
+    if (packageData && packageData.features) {
+      try {
+        packageData.features = typeof packageData.features === 'string' 
+          ? JSON.parse(packageData.features) 
+          : packageData.features;
+      } catch (e) {
+        packageData.features = [];
+      }
+    }
+
     res.json({
       success: true,
-      data: updatedPackage[0],
+      data: packageData,
       message: 'Package updated successfully'
     });
   } catch (error) {
@@ -1775,39 +1876,156 @@ const getSupportTickets = async (req, res) => {
 };
 
 /**
+ * Ensure system_settings table exists
+ */
+const ensureSystemSettingsTable = async () => {
+  try {
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS system_settings (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        company_id INT DEFAULT NULL,
+        setting_key VARCHAR(100) NOT NULL,
+        setting_value TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY unique_setting (company_id, setting_key)
+      )
+    `);
+    return true;
+  } catch (error) {
+    console.error('Error ensuring system_settings table:', error);
+    return false;
+  }
+};
+
+/**
+ * Ensure audit_logs table exists
+ */
+const ensureAuditLogsTable = async () => {
+  try {
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS audit_logs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        admin_id INT,
+        admin_name VARCHAR(255),
+        action VARCHAR(255) NOT NULL,
+        module VARCHAR(100),
+        old_value TEXT,
+        new_value TEXT,
+        ip_address VARCHAR(45),
+        user_agent TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_admin_id (admin_id),
+        INDEX idx_action (action),
+        INDEX idx_module (module),
+        INDEX idx_created_at (created_at)
+      )
+    `);
+    return true;
+  } catch (error) {
+    console.error('Error ensuring audit_logs table:', error);
+    return false;
+  }
+};
+
+/**
+ * Log audit entry
+ */
+const logAudit = async (adminId, adminName, action, module, oldValue, newValue, ipAddress, userAgent) => {
+  try {
+    await ensureAuditLogsTable();
+    await pool.execute(
+      `INSERT INTO audit_logs (admin_id, admin_name, action, module, old_value, new_value, ip_address, user_agent)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        adminId,
+        adminName,
+        action,
+        module,
+        typeof oldValue === 'object' ? JSON.stringify(oldValue) : oldValue,
+        typeof newValue === 'object' ? JSON.stringify(newValue) : newValue,
+        ipAddress,
+        userAgent
+      ]
+    );
+  } catch (error) {
+    console.error('Error logging audit:', error);
+  }
+};
+
+/**
+ * Encrypt sensitive data (simple encryption for demo - use proper encryption in production)
+ */
+const encryptValue = (value) => {
+  if (!value) return value;
+  // In production, use proper encryption like AES-256
+  return Buffer.from(value).toString('base64');
+};
+
+/**
+ * Decrypt sensitive data
+ */
+const decryptValue = (value) => {
+  if (!value) return value;
+  try {
+    return Buffer.from(value, 'base64').toString('utf8');
+  } catch {
+    return value;
+  }
+};
+
+/**
  * Get system settings
  * GET /api/v1/superadmin/settings
  */
 const getSystemSettings = async (req, res) => {
   try {
+    // Ensure table exists
+    await ensureSystemSettingsTable();
+
     // Get settings from system_settings table or return defaults
     const [settings] = await pool.execute(
       `SELECT * FROM system_settings 
-       WHERE company_id IS NULL 
-       AND (setting_key LIKE 'system_%' OR setting_key LIKE 'email_%' OR setting_key LIKE 'backup_%' OR setting_key LIKE 'footer_%')`
+       WHERE company_id IS NULL`
     );
 
     const settingsObj = {};
     settings.forEach(setting => {
-      settingsObj[setting.setting_key] = setting.setting_value;
+      // Decrypt sensitive fields
+      if (setting.setting_key === 'smtp_password' && setting.setting_value) {
+        settingsObj[setting.setting_key] = decryptValue(setting.setting_value);
+      } else {
+        settingsObj[setting.setting_key] = setting.setting_value;
+      }
     });
 
     // Default settings if not found
     const defaultSettings = {
-      system_name: settingsObj.system_name || 'Worksuite CRM',
+      // General Settings
+      system_name: settingsObj.system_name || 'Develo CRM',
       default_currency: settingsObj.default_currency || 'USD',
       default_timezone: settingsObj.default_timezone || 'UTC',
       session_timeout: settingsObj.session_timeout || '30',
+      
+      // File Upload Settings
       max_file_size: settingsObj.max_file_size || '10',
-      allowed_file_types: settingsObj.allowed_file_types || 'pdf,doc,docx,xls,xlsx,jpg,jpeg,png',
-      email_from: settingsObj.email_from || 'noreply@worksuite.com',
-      email_from_name: settingsObj.email_from_name || 'Worksuite CRM',
+      allowed_file_types: settingsObj.allowed_file_types || 'pdf,doc,docx,xls,xlsx,jpg,jpeg,png,gif,zip',
+      
+      // Email/SMTP Settings
+      email_from: settingsObj.email_from || 'noreply@develo.com',
+      email_from_name: settingsObj.email_from_name || 'Develo CRM',
       smtp_host: settingsObj.smtp_host || '',
       smtp_port: settingsObj.smtp_port || '587',
       smtp_username: settingsObj.smtp_username || '',
-      smtp_password: settingsObj.smtp_password || '',
+      smtp_password: settingsObj.smtp_password ? '********' : '', // Mask password
+      smtp_encryption: settingsObj.smtp_encryption || 'tls',
+      
+      // Backup Settings
       backup_frequency: settingsObj.backup_frequency || 'daily',
-      enable_audit_log: settingsObj.enable_audit_log === 'true' || true,
+      last_backup_time: settingsObj.last_backup_time || null,
+      
+      // Audit Log
+      enable_audit_log: settingsObj.enable_audit_log === 'true' || settingsObj.enable_audit_log === true || true,
 
       // Footer Settings
       footer_company_address: settingsObj.footer_company_address || '',
@@ -1839,17 +2057,119 @@ const getSystemSettings = async (req, res) => {
  */
 const updateSystemSettings = async (req, res) => {
   try {
+    // Ensure table exists
+    await ensureSystemSettingsTable();
+    
     const settings = req.body;
+    const adminId = req.user?.id || null;
+    const adminName = req.user?.name || 'Unknown';
+    const ipAddress = req.ip || req.connection?.remoteAddress || 'Unknown';
+    const userAgent = req.headers['user-agent'] || 'Unknown';
 
-    // Update or insert each setting in system_settings table (company_id = NULL for system-wide settings)
+    // Validation
+    const errors = [];
+
+    // Validate system_name
+    if (settings.system_name !== undefined && !settings.system_name.trim()) {
+      errors.push('System name cannot be empty');
+    }
+
+    // Validate session_timeout
+    if (settings.session_timeout !== undefined) {
+      const timeout = parseInt(settings.session_timeout);
+      if (isNaN(timeout) || timeout < 1 || timeout > 1440) {
+        errors.push('Session timeout must be between 1 and 1440 minutes');
+      }
+    }
+
+    // Validate max_file_size
+    if (settings.max_file_size !== undefined) {
+      const size = parseInt(settings.max_file_size);
+      if (isNaN(size) || size < 1 || size > 100) {
+        errors.push('Max file size must be between 1 and 100 MB');
+      }
+    }
+
+    // Validate email format
+    if (settings.email_from !== undefined && settings.email_from) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(settings.email_from)) {
+        errors.push('Invalid email format for From Email');
+      }
+    }
+
+    // Validate SMTP port
+    if (settings.smtp_port !== undefined && settings.smtp_port) {
+      const port = parseInt(settings.smtp_port);
+      if (isNaN(port) || port < 1 || port > 65535) {
+        errors.push('SMTP port must be between 1 and 65535');
+      }
+    }
+
+    // Validate URLs
+    const urlFields = ['footer_privacy_link', 'footer_terms_link', 'footer_refund_link', 'footer_custom_link_1_url', 'footer_custom_link_2_url'];
+    urlFields.forEach(field => {
+      if (settings[field] && settings[field].trim()) {
+        try {
+          new URL(settings[field]);
+        } catch {
+          errors.push(`Invalid URL for ${field.replace(/_/g, ' ')}`);
+        }
+      }
+    });
+
+    if (errors.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: errors.join(', ')
+      });
+    }
+
+    // Get old settings for audit log
+    let oldSettings = {};
+    try {
+      const [oldRows] = await pool.execute(
+        `SELECT setting_key, setting_value FROM system_settings WHERE company_id IS NULL`
+      );
+      oldRows.forEach(row => {
+        oldSettings[row.setting_key] = row.setting_value;
+      });
+    } catch (e) {
+      console.error('Error fetching old settings for audit:', e);
+    }
+
+    // Update or insert each setting
     for (const [key, value] of Object.entries(settings)) {
-      const settingValue = typeof value === 'object' ? JSON.stringify(value) : String(value);
+      let settingValue = typeof value === 'object' ? JSON.stringify(value) : String(value);
+      
+      // Encrypt sensitive fields
+      if (key === 'smtp_password' && value && value !== '********') {
+        settingValue = encryptValue(value);
+      } else if (key === 'smtp_password' && value === '********') {
+        // Skip updating if password is masked
+        continue;
+      }
 
       await pool.execute(
         `INSERT INTO system_settings (company_id, setting_key, setting_value, updated_at)
          VALUES (NULL, ?, ?, NOW())
          ON DUPLICATE KEY UPDATE setting_value = ?, updated_at = NOW()`,
         [key, settingValue, settingValue]
+      );
+    }
+
+    // Log audit if enabled
+    const enableAuditLog = settings.enable_audit_log !== 'false' && settings.enable_audit_log !== false;
+    if (enableAuditLog) {
+      await logAudit(
+        adminId,
+        adminName,
+        'Updated System Settings',
+        'system_settings',
+        oldSettings,
+        settings,
+        ipAddress,
+        userAgent
       );
     }
 
@@ -1863,6 +2183,163 @@ const updateSystemSettings = async (req, res) => {
       success: false,
       error: 'Failed to update system settings',
       details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+/**
+ * Test SMTP Connection
+ * POST /api/v1/superadmin/settings/test-email
+ */
+const testEmailSettings = async (req, res) => {
+  try {
+    const { test_email } = req.body;
+
+    if (!test_email) {
+      return res.status(400).json({
+        success: false,
+        error: 'Test email address is required'
+      });
+    }
+
+    // Get SMTP settings from database
+    await ensureSystemSettingsTable();
+    const [settings] = await pool.execute(
+      `SELECT setting_key, setting_value FROM system_settings 
+       WHERE company_id IS NULL AND setting_key LIKE 'smtp_%' OR setting_key LIKE 'email_%'`
+    );
+
+    const smtpConfig = {};
+    settings.forEach(s => {
+      if (s.setting_key === 'smtp_password' && s.setting_value) {
+        smtpConfig[s.setting_key] = decryptValue(s.setting_value);
+      } else {
+        smtpConfig[s.setting_key] = s.setting_value;
+      }
+    });
+
+    // Check if SMTP is configured
+    if (!smtpConfig.smtp_host || !smtpConfig.smtp_username) {
+      return res.status(400).json({
+        success: false,
+        error: 'SMTP settings are not fully configured. Please save SMTP settings first.'
+      });
+    }
+
+    // Try to send test email using nodemailer (if available)
+    try {
+      const nodemailer = require('nodemailer');
+      
+      const transporter = nodemailer.createTransport({
+        host: smtpConfig.smtp_host,
+        port: parseInt(smtpConfig.smtp_port) || 587,
+        secure: smtpConfig.smtp_encryption === 'ssl',
+        auth: {
+          user: smtpConfig.smtp_username,
+          pass: smtpConfig.smtp_password
+        }
+      });
+
+      await transporter.sendMail({
+        from: `"${smtpConfig.email_from_name || 'Develo CRM'}" <${smtpConfig.email_from || smtpConfig.smtp_username}>`,
+        to: test_email,
+        subject: 'Test Email from Develo CRM',
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2 style="color: #6366f1;">🎉 Test Email Successful!</h2>
+            <p>This is a test email from your Develo CRM system.</p>
+            <p>If you received this email, your SMTP settings are configured correctly.</p>
+            <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 20px 0;">
+            <p style="color: #6b7280; font-size: 12px;">
+              Sent from Develo CRM at ${new Date().toLocaleString()}
+            </p>
+          </div>
+        `
+      });
+
+      res.json({
+        success: true,
+        message: `Test email sent successfully to ${test_email}`
+      });
+    } catch (emailError) {
+      console.error('Email send error:', emailError);
+      res.status(500).json({
+        success: false,
+        error: `Failed to send test email: ${emailError.message}`
+      });
+    }
+  } catch (error) {
+    console.error('Test email error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to test email settings'
+    });
+  }
+};
+
+/**
+ * Get Audit Logs
+ * GET /api/v1/superadmin/audit-logs
+ */
+const getAuditLogs = async (req, res) => {
+  try {
+    await ensureAuditLogsTable();
+    
+    const { page = 1, limit = 50, module, action, admin_id, start_date, end_date } = req.query;
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+
+    let whereClause = '1=1';
+    const params = [];
+
+    if (module) {
+      whereClause += ' AND module = ?';
+      params.push(module);
+    }
+    if (action) {
+      whereClause += ' AND action LIKE ?';
+      params.push(`%${action}%`);
+    }
+    if (admin_id) {
+      whereClause += ' AND admin_id = ?';
+      params.push(admin_id);
+    }
+    if (start_date) {
+      whereClause += ' AND created_at >= ?';
+      params.push(start_date);
+    }
+    if (end_date) {
+      whereClause += ' AND created_at <= ?';
+      params.push(end_date + ' 23:59:59');
+    }
+
+    // Get total count
+    const [countResult] = await pool.execute(
+      `SELECT COUNT(*) as total FROM audit_logs WHERE ${whereClause}`,
+      params
+    );
+    const total = countResult[0].total;
+
+    // Get logs
+    const [logs] = await pool.execute(
+      `SELECT * FROM audit_logs WHERE ${whereClause} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+      [...params, parseInt(limit), offset]
+    );
+
+    res.json({
+      success: true,
+      data: logs,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        totalPages: Math.ceil(total / parseInt(limit))
+      }
+    });
+  } catch (error) {
+    console.error('Get audit logs error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch audit logs'
     });
   }
 };
@@ -1894,6 +2371,8 @@ module.exports = {
   rejectCompanyRequest,
   getSupportTickets,
   getSystemSettings,
-  updateSystemSettings
+  updateSystemSettings,
+  testEmailSettings,
+  getAuditLogs
 };
 

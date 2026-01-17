@@ -7,6 +7,7 @@ const pool = require('../config/db');
 // Ensure notes table exists
 const ensureTableExists = async () => {
   try {
+    // First create notes table
     await pool.execute(`
       CREATE TABLE IF NOT EXISTS notes (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -25,6 +26,41 @@ const ensureTableExists = async () => {
         INDEX idx_client (client_id)
       )
     `);
+
+    // Check if note_files table exists
+    const [tables] = await pool.execute(
+      "SHOW TABLES LIKE 'note_files'"
+    );
+
+    // Create note_files table only if it doesn't exist
+    if (tables.length === 0) {
+      await pool.execute(`
+        CREATE TABLE note_files (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          note_id INT NOT NULL,
+          company_id INT NOT NULL,
+          file_name VARCHAR(255) NOT NULL,
+          file_path VARCHAR(500) NOT NULL,
+          file_size INT,
+          file_type VARCHAR(100),
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          INDEX idx_note_file (note_id),
+          INDEX idx_company (company_id)
+        )
+      `);
+      
+      // Add foreign key constraint separately if possible
+      try {
+        await pool.execute(`
+          ALTER TABLE note_files 
+          ADD CONSTRAINT fk_note_files_note_id 
+          FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE
+        `);
+      } catch (fkError) {
+        // Foreign key creation failed, but table exists - that's okay
+        console.log('Note: Foreign key constraint could not be added to note_files table (table may already have data)');
+      }
+    }
   } catch (error) {
     console.error('Error ensuring notes table exists:', error);
   }
@@ -84,6 +120,24 @@ const getAll = async (req, res) => {
        ORDER BY n.created_at DESC`,
       params
     );
+
+    if (notes.length > 0) {
+      const noteIds = notes.map(n => n.id);
+      const [files] = await pool.execute(
+        `SELECT * FROM note_files WHERE note_id IN (${noteIds.map(() => '?').join(',')})`,
+        noteIds
+      );
+
+      const filesByNote = {};
+      files.forEach(f => {
+        if (!filesByNote[f.note_id]) filesByNote[f.note_id] = [];
+        filesByNote[f.note_id].push(f);
+      });
+
+      notes.forEach(n => {
+        n.files = filesByNote[n.id] || [];
+      });
+    }
 
     res.json({
       success: true,
@@ -158,18 +212,38 @@ const create = async (req, res) => {
       content
     } = req.body;
 
-    // Removed required validations - allow empty data
-
     const [result] = await pool.execute(
       `INSERT INTO notes (company_id, user_id, client_id, lead_id, project_id, title, content)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [company_id ?? null, user_id || null, client_id || null, lead_id || null, project_id || null, title || null, content || null]
     );
 
+    const noteId = result.insertId;
+    const files = [];
+
+    if (req.files && req.files.length > 0) {
+      for (const file of req.files) {
+        const filePath = file.path.replace(/\\/g, '/'); // Normalize path
+        await pool.execute(
+          `INSERT INTO note_files (note_id, company_id, file_name, file_path, file_size, file_type)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [noteId, company_id, file.originalname, filePath, file.size, file.mimetype]
+        );
+        files.push({
+          file_name: file.originalname,
+          file_path: filePath,
+          file_size: file.size,
+          file_type: file.mimetype
+        });
+      }
+    }
+
     const [newNote] = await pool.execute(
       'SELECT * FROM notes WHERE id = ?',
-      [result.insertId]
+      [noteId]
     );
+
+    newNote[0].files = files;
 
     res.status(201).json({
       success: true,

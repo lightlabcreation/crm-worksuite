@@ -8,11 +8,77 @@ const path = require('path');
 const fs = require('fs');
 
 /**
+ * Ensure pwa_settings table exists
+ */
+const ensureTableExists = async () => {
+    try {
+        // Check if table exists
+        const [tables] = await pool.execute(
+            "SHOW TABLES LIKE 'pwa_settings'"
+        );
+        
+        if (tables.length === 0) {
+            // Create table if it doesn't exist
+            await pool.execute(`
+                CREATE TABLE pwa_settings (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    enabled TINYINT(1) DEFAULT 0,
+                    app_name VARCHAR(100) DEFAULT 'Develo CRM',
+                    short_name VARCHAR(50) DEFAULT 'CRM',
+                    description TEXT,
+                    theme_color VARCHAR(20) DEFAULT '#6366f1',
+                    background_color VARCHAR(20) DEFAULT '#ffffff',
+                    icon_url VARCHAR(500),
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                )
+            `);
+            
+            // Insert default row
+            await pool.execute(`
+                INSERT INTO pwa_settings (enabled, app_name, short_name, description, theme_color, background_color)
+                VALUES (0, 'Develo CRM', 'CRM', 'A powerful CRM solution for your business', '#6366f1', '#ffffff')
+            `);
+        } else {
+            // Table exists, check if 'enabled' column exists and add it if missing
+            const [columns] = await pool.execute(
+                "SHOW COLUMNS FROM pwa_settings LIKE 'enabled'"
+            );
+            
+            if (columns.length === 0) {
+                // Add 'enabled' column if it doesn't exist
+                await pool.execute(`
+                    ALTER TABLE pwa_settings 
+                    ADD COLUMN enabled TINYINT(1) DEFAULT 0 AFTER id
+                `);
+            }
+            
+            // Check if table is empty and insert default row
+            const [rows] = await pool.execute('SELECT COUNT(*) as count FROM pwa_settings');
+            if (rows[0].count === 0) {
+                await pool.execute(`
+                    INSERT INTO pwa_settings (enabled, app_name, short_name, description, theme_color, background_color)
+                    VALUES (0, 'Develo CRM', 'CRM', 'A powerful CRM solution for your business', '#6366f1', '#ffffff')
+                `);
+            }
+        }
+        
+        return true;
+    } catch (error) {
+        console.error('Error ensuring pwa_settings table exists:', error);
+        return false;
+    }
+};
+
+/**
  * Get PWA Settings (Public - No Auth Required)
  * GET /api/v1/settings/pwa
  */
 const getPwaSettings = async (req, res) => {
     try {
+        // Ensure table exists first
+        await ensureTableExists();
+        
         // Check if table exists and get settings
         const [rows] = await pool.execute(
             'SELECT * FROM pwa_settings LIMIT 1'
@@ -70,6 +136,9 @@ const getPwaSettings = async (req, res) => {
  */
 const updatePwaSettings = async (req, res) => {
     try {
+        // Ensure table exists first
+        await ensureTableExists();
+        
         const {
             enabled,
             app_name,
@@ -246,6 +315,9 @@ const updatePwaSettings = async (req, res) => {
  */
 const getManifest = async (req, res) => {
     try {
+        // Ensure table exists first
+        await ensureTableExists();
+        
         const [rows] = await pool.execute('SELECT * FROM pwa_settings LIMIT 1');
 
         const settings = rows[0] || {
