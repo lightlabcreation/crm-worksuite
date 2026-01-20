@@ -53,16 +53,33 @@ const createTransporter = () => {
 
 const sendEmail = async (options) => {
   try {
+    console.log('=== EMAIL SERVICE CALLED ===');
+    console.log('To:', options.to);
+    console.log('CC:', options.cc);
+    console.log('BCC:', options.bcc);
+    console.log('Subject:', options.subject);
+    console.log('Has HTML:', !!options.html);
+    console.log('Has Text:', !!options.text);
+
     const emailTransporter = createTransporter();
 
     // If transporter is not configured, log and return success (for development)
     if (!emailTransporter) {
-      console.log('📧 Email Service (Development Mode - Not Configured)');
+      console.log('⚠️  Email Service (Development Mode - SMTP Not Configured)');
       console.log('To:', options.to);
       console.log('Subject:', options.subject);
       console.log('HTML:', options.html ? 'Content provided' : 'No HTML');
       console.log('Text:', options.text || 'No text');
       console.log('Attachments:', options.attachments?.length || 0);
+
+      // In production, this should fail
+      if (process.env.NODE_ENV === 'production') {
+        return {
+          success: false,
+          error: 'SMTP configuration is required in production environment',
+          message: 'Email service not configured'
+        };
+      }
 
       return {
         success: true,
@@ -74,29 +91,57 @@ const sendEmail = async (options) => {
     const mailOptions = {
       from: process.env.SMTP_FROM || process.env.SMTP_USER || '"CRM Worksuite" <noreply@crmworksuite.com>',
       to: options.to,
-      cc: options.cc,
-      bcc: options.bcc,
       subject: options.subject,
       html: options.html || options.text,
-      text: options.text || (options.html ? options.html.replace(/<[^>]*>/g, '') : ''),
+      text: options.text || (options.html ? options.html.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim() : ''),
       attachments: options.attachments || []
     };
+
+    // Only include CC and BCC if provided
+    if (options.cc) {
+      mailOptions.cc = options.cc;
+    }
+    if (options.bcc) {
+      mailOptions.bcc = options.bcc;
+    }
+
+    console.log('Sending email with options:', {
+      from: mailOptions.from,
+      to: mailOptions.to,
+      cc: mailOptions.cc,
+      bcc: mailOptions.bcc,
+      subject: mailOptions.subject
+    });
 
     const info = await emailTransporter.sendMail(mailOptions);
 
     console.log('✅ Email sent successfully:', info.messageId);
+    console.log('Response:', info.response);
+
     return {
       success: true,
       message: 'Email sent successfully',
       messageId: info.messageId
     };
   } catch (error) {
-    console.error('❌ Email sending failed:', error.message);
+    console.error('❌ EMAIL SENDING FAILED ===');
+    console.error('Error message:', error.message);
+    console.error('Error code:', error.code);
+    console.error('Error command:', error.command);
+    console.error('Error response:', error.response);
+    console.error('Error stack:', error.stack);
+    
     // Don't throw error - return failure so calling code can handle gracefully
     return {
       success: false,
-      error: error.message,
-      message: 'Failed to send email'
+      error: error.message || 'Unknown error occurred',
+      code: error.code,
+      message: 'Failed to send email',
+      details: process.env.NODE_ENV === 'development' ? {
+        command: error.command,
+        response: error.response,
+        responseCode: error.responseCode
+      } : undefined
     };
   }
 };

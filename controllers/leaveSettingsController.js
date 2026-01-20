@@ -328,13 +328,6 @@ exports.createLeaveType = async (req, res) => {
       });
     }
 
-    if (!leaveTypeData.total_leaves || leaveTypeData.total_leaves <= 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'Number of leaves must be greater than 0'
-      });
-    }
-
     const dbData = {
       company_id: company_id,
       name: leaveTypeData.name.trim(),

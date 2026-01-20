@@ -287,12 +287,36 @@ const getById = async (req, res) => {
  */
 const create = async (req, res) => {
   try {
+    console.log('=== CREATE LEAD REQUEST ===');
+    console.log('Request body:', JSON.stringify(req.body, null, 2));
+    
     const {
       lead_type, company_name, person_name, email, phone,
       owner_id, status, source, address,
       city, state, zip, country, value, due_followup,
       notes, probability, call_this_week, labels = [], services = []
     } = req.body;
+
+    // Sanitize services array - ensure it's an array and filter out invalid values
+    let sanitizedServices = [];
+    if (Array.isArray(services)) {
+      sanitizedServices = services
+        .filter(s => s !== null && s !== undefined && s !== '' && s !== 'undefined')
+        .map(s => {
+          const num = parseInt(s);
+          return isNaN(num) ? null : num;
+        })
+        .filter(s => s !== null);
+    } else if (services) {
+      // Handle single value
+      const num = parseInt(services);
+      if (!isNaN(num)) {
+        sanitizedServices = [num];
+      }
+    }
+
+    console.log('Original services:', services);
+    console.log('Sanitized services:', sanitizedServices);
 
     // Removed required validations - allow empty data
     // Sanitize integer fields
@@ -349,12 +373,22 @@ const create = async (req, res) => {
     }
 
     // Insert services
-    if (services && services.length > 0) {
-      const serviceValues = services.map(serviceId => [leadId, parseInt(serviceId), companyId]);
-      await pool.query(
-        `INSERT INTO lead_services (lead_id, item_id, company_id) VALUES ?`,
-        [serviceValues]
-      );
+    if (sanitizedServices && sanitizedServices.length > 0) {
+      console.log('Inserting services:', sanitizedServices);
+      const serviceValues = sanitizedServices.map(serviceId => [leadId, serviceId, companyId]);
+      
+      try {
+        await pool.query(
+          `INSERT INTO lead_services (lead_id, item_id, company_id) VALUES ?`,
+          [serviceValues]
+        );
+        console.log('Services inserted successfully');
+      } catch (serviceError) {
+        console.error('Error inserting services:', serviceError);
+        // Don't fail the lead creation if services fail
+      }
+    } else {
+      console.log('No services to insert or services array is empty');
     }
 
     // Get created lead with company name and owner details
@@ -490,13 +524,40 @@ const update = async (req, res) => {
 
     // Update services if provided
     if (updateFields.services !== undefined) {
+      // Sanitize services array - ensure it's an array and filter out invalid values
+      let sanitizedServices = [];
+      if (Array.isArray(updateFields.services)) {
+        sanitizedServices = updateFields.services
+          .filter(s => s !== null && s !== undefined && s !== '' && s !== 'undefined')
+          .map(s => {
+            const num = parseInt(s);
+            return isNaN(num) ? null : num;
+          })
+          .filter(s => s !== null);
+      } else if (updateFields.services) {
+        // Handle single value
+        const num = parseInt(updateFields.services);
+        if (!isNaN(num)) {
+          sanitizedServices = [num];
+        }
+      }
+
+      console.log('Update - Original services:', updateFields.services);
+      console.log('Update - Sanitized services:', sanitizedServices);
+
       await pool.execute(`DELETE FROM lead_services WHERE lead_id = ?`, [id]);
-      if (updateFields.services && updateFields.services.length > 0) {
-        const serviceValues = updateFields.services.map(serviceId => [id, parseInt(serviceId), companyId]);
-        await pool.query(
-          `INSERT INTO lead_services (lead_id, item_id, company_id) VALUES ?`,
-          [serviceValues]
-        );
+      if (sanitizedServices.length > 0) {
+        const serviceValues = sanitizedServices.map(serviceId => [id, serviceId, companyId]);
+        try {
+          await pool.query(
+            `INSERT INTO lead_services (lead_id, item_id, company_id) VALUES ?`,
+            [serviceValues]
+          );
+          console.log('Update - Services inserted successfully');
+        } catch (serviceError) {
+          console.error('Error inserting services during update:', serviceError);
+          // Don't fail the update if services fail
+        }
       }
     }
 

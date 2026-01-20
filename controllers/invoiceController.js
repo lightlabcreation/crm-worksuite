@@ -1083,9 +1083,20 @@ const sendEmail = async (req, res) => {
     const { id } = req.params;
     const { to, subject, message } = req.body;
 
-    // Get invoice
+    // Get invoice with client contact email
+    // First try to get primary contact, fallback to any contact
     const [invoices] = await pool.execute(
-      `SELECT i.*, c.company_name as client_name, c.email as client_email, comp.name as company_name
+      `SELECT i.*, 
+              c.company_name as client_name, 
+              COALESCE(
+                (SELECT email FROM client_contacts WHERE client_id = c.id AND is_primary = 1 AND is_deleted = 0 LIMIT 1),
+                (SELECT email FROM client_contacts WHERE client_id = c.id AND is_deleted = 0 LIMIT 1)
+              ) as client_email,
+              COALESCE(
+                (SELECT name FROM client_contacts WHERE client_id = c.id AND is_primary = 1 AND is_deleted = 0 LIMIT 1),
+                (SELECT name FROM client_contacts WHERE client_id = c.id AND is_deleted = 0 LIMIT 1)
+              ) as contact_name,
+              comp.name as company_name
        FROM invoices i
        LEFT JOIN clients c ON i.client_id = c.id
        LEFT JOIN companies comp ON i.company_id = comp.id
@@ -1123,10 +1134,28 @@ const sendEmail = async (req, res) => {
       emailSubject = subject || `Invoice ${invoice.invoice_number}`;
       emailHTML = message;
     } else {
-      // Use template
-      const rendered = await renderEmailTemplate('invoice_sent', templateData, invoice.company_id);
-      emailSubject = subject || rendered.subject;
-      emailHTML = rendered.body;
+      // Use template - try send_invoice first, fallback to invoice_sent
+      try {
+        let rendered = await renderEmailTemplate('send_invoice', templateData, invoice.company_id);
+        if (!rendered || !rendered.body) {
+          // Fallback to invoice_sent
+          rendered = await renderEmailTemplate('invoice_sent', templateData, invoice.company_id);
+        }
+        emailSubject = subject || rendered.subject || `Invoice ${invoice.invoice_number}`;
+        emailHTML = rendered.body || `<p>Invoice ${invoice.invoice_number} - Amount: ${templateData.INVOICE_AMOUNT}</p>`;
+      } catch (templateError) {
+        console.warn('Template rendering error:', templateError.message);
+        // Fallback to basic template
+        emailSubject = subject || `Invoice ${invoice.invoice_number}`;
+        emailHTML = `<div style="padding: 20px; font-family: Arial, sans-serif;">
+          <h2>Invoice ${templateData.INVOICE_NUMBER}</h2>
+          <p>Hello ${templateData.CONTACT_FIRST_NAME},</p>
+          <p>Please find your invoice details below:</p>
+          <p><strong>Amount:</strong> ${templateData.INVOICE_AMOUNT}</p>
+          <p><a href="${templateData.PUBLIC_INVOICE_URL}">View Invoice</a></p>
+          <p>${templateData.SIGNATURE}</p>
+        </div>`;
+      }
     }
 
     // Send email
@@ -1135,29 +1164,60 @@ const sendEmail = async (req, res) => {
       return res.status(400).json({ success: false, error: 'Recipient email is required' });
     }
 
-    await sendEmailUtil({
+    // Handle CC and BCC from request body
+    const emailOptions = {
       to: recipientEmail,
+      cc: req.body.cc || undefined,
+      bcc: req.body.bcc || undefined,
       subject: emailSubject,
       html: emailHTML,
       text: `Please view the invoice at: ${publicUrl}`
+    };
+
+    console.log('=== SENDING INVOICE EMAIL ===');
+    console.log('Email options:', { ...emailOptions, html: emailOptions.html ? 'HTML provided' : 'No HTML' });
+
+    const emailResult = await sendEmailUtil(emailOptions);
+
+    if (!emailResult.success) {
+      console.error('Email sending failed:', emailResult.error);
+      return res.status(500).json({ 
+        success: false, 
+        error: emailResult.error || 'Failed to send invoice email',
+        details: process.env.NODE_ENV === 'development' ? emailResult.message : undefined
     });
+    }
 
     // Update invoice status to 'Sent' if it's Draft
-    if (invoice.status === 'Draft') {
+    if (invoice.status === 'Draft' || invoice.status === 'draft') {
+      try {
       await pool.execute(
         `UPDATE invoices SET status = 'Unpaid', sent_at = NOW() WHERE id = ?`,
         [id]
       );
+      } catch (updateError) {
+        console.warn('Failed to update invoice status:', updateError.message);
+        // Don't fail the request if status update fails
+      }
     }
+
+    console.log('✅ Invoice email sent successfully');
 
     res.json({ 
       success: true, 
       message: 'Invoice sent successfully',
-      data: { email: recipientEmail }
+      data: { email: recipientEmail, messageId: emailResult.messageId }
     });
   } catch (error) {
-    console.error('Send invoice email error:', error);
-    res.status(500).json({ success: false, error: 'Failed to send invoice email' });
+    console.error('=== SEND INVOICE EMAIL ERROR ===');
+    console.error('Error:', error);
+    console.error('Error message:', error.message);
+    console.error('Error stack:', error.stack);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to send invoice email',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 };
 

@@ -233,6 +233,11 @@ const create = async (req, res) => {
       [result.insertId]
     );
 
+    // If status is Approved, mark attendance as on_leave
+    if (status && (status.toLowerCase() === 'approved' || status === 'Approved')) {
+      await markAttendanceAsOnLeave(companyId, finalUserId, start_date, end_date);
+    }
+
     res.status(201).json({
       success: true,
       data: newRequest[0],
@@ -325,10 +330,34 @@ const update = async (req, res) => {
     updates.push('updated_at = NOW()');
     params.push(id);
 
+    // Get the old status and new status to handle attendance marking
+    const oldStatus = existing[0].status;
+    const newStatus = status !== undefined ? status : oldStatus;
+    const finalStartDate = start_date !== undefined ? start_date : existing[0].start_date;
+    const finalEndDate = end_date !== undefined ? end_date : existing[0].end_date;
+    const finalUserId = existing[0].user_id;
+    const finalCompanyId = existing[0].company_id;
+
     await pool.execute(
       `UPDATE leave_requests SET ${updates.join(', ')} WHERE id = ?`,
       params
     );
+
+    // If status changed to Approved, mark attendance as on_leave
+    if (newStatus && (newStatus.toLowerCase() === 'approved' || newStatus === 'Approved')) {
+      if (oldStatus && oldStatus.toLowerCase() !== 'approved') {
+        // Only mark if it wasn't already approved
+        await markAttendanceAsOnLeave(finalCompanyId, finalUserId, finalStartDate, finalEndDate);
+      } else if (start_date !== undefined || end_date !== undefined) {
+        // If dates changed and it's already approved, update attendance
+        await markAttendanceAsOnLeave(finalCompanyId, finalUserId, finalStartDate, finalEndDate);
+      }
+    } else if (newStatus && (newStatus.toLowerCase() === 'rejected' || newStatus === 'Rejected')) {
+      // If rejected, remove on_leave status from attendance (if it was previously approved)
+      if (oldStatus && oldStatus.toLowerCase() === 'approved') {
+        await removeOnLeaveFromAttendance(finalCompanyId, finalUserId, finalStartDate, finalEndDate);
+      }
+    }
 
     // Return with calculated days
     const [updatedRequest] = await pool.execute(
@@ -348,6 +377,116 @@ const update = async (req, res) => {
       success: false,
       error: 'Failed to update leave request'
     });
+  }
+};
+
+/**
+ * Helper function to mark attendance as on_leave for leave dates
+ */
+const markAttendanceAsOnLeave = async (companyId, userId, startDate, endDate) => {
+  try {
+    // Get employee_id from user_id
+    const [employeeCheck] = await pool.execute(
+      `SELECT id FROM employees WHERE user_id = ? AND company_id = ? LIMIT 1`,
+      [userId, companyId]
+    );
+
+    if (employeeCheck.length === 0) {
+      console.warn(`Employee not found for user_id: ${userId}, company_id: ${companyId}`);
+      return;
+    }
+
+    const employeeId = employeeCheck[0].id;
+
+    // Generate all dates between start_date and end_date
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const dates = [];
+
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      dates.push(new Date(d).toISOString().split('T')[0]);
+    }
+
+    // Mark attendance as on_leave for each date
+    for (const date of dates) {
+      try {
+        // Use INSERT ... ON DUPLICATE KEY UPDATE to handle both new and existing records
+        await pool.execute(
+          `INSERT INTO attendance (company_id, employee_id, user_id, date, status, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 'on_leave', NOW(), NOW())
+           ON DUPLICATE KEY UPDATE 
+             status = 'on_leave',
+             updated_at = NOW()`,
+          [companyId, employeeId, userId, date]
+        );
+      } catch (dateError) {
+        // If the above fails, try checking and updating separately
+        try {
+          const [existing] = await pool.execute(
+            `SELECT id FROM attendance WHERE employee_id = ? AND date = ? AND is_deleted = 0`,
+            [employeeId, date]
+          );
+
+          if (existing.length > 0) {
+            await pool.execute(
+              `UPDATE attendance 
+               SET status = 'on_leave', updated_at = NOW()
+               WHERE id = ?`,
+              [existing[0].id]
+            );
+          } else {
+            // Try insert without ON DUPLICATE KEY (in case constraint doesn't exist)
+            await pool.execute(
+              `INSERT INTO attendance (company_id, employee_id, user_id, date, status, created_at, updated_at)
+               VALUES (?, ?, ?, ?, 'on_leave', NOW(), NOW())`,
+              [companyId, employeeId, userId, date]
+            );
+          }
+        } catch (fallbackError) {
+          console.error(`Error marking attendance for date ${date}:`, fallbackError);
+          // Continue with other dates even if one fails
+        }
+      }
+    }
+
+    console.log(`✅ Marked attendance as on_leave for user ${userId} from ${startDate} to ${endDate}`);
+  } catch (error) {
+    console.error('Error marking attendance as on_leave:', error);
+    // Don't throw - we don't want to fail the leave update if attendance marking fails
+  }
+};
+
+/**
+ * Helper function to remove on_leave status from attendance when leave is rejected
+ */
+const removeOnLeaveFromAttendance = async (companyId, userId, startDate, endDate) => {
+  try {
+    // Get employee_id from user_id
+    const [employeeCheck] = await pool.execute(
+      `SELECT id FROM employees WHERE user_id = ? AND company_id = ? LIMIT 1`,
+      [userId, companyId]
+    );
+
+    if (employeeCheck.length === 0) {
+      return;
+    }
+
+    const employeeId = employeeCheck[0].id;
+
+    // Remove on_leave status - set to absent or delete the record
+    await pool.execute(
+      `UPDATE attendance 
+       SET status = 'absent', updated_at = NOW()
+       WHERE employee_id = ? 
+       AND date BETWEEN ? AND ?
+       AND status = 'on_leave'
+       AND is_deleted = 0`,
+      [employeeId, startDate, endDate]
+    );
+
+    console.log(`✅ Removed on_leave status from attendance for user ${userId} from ${startDate} to ${endDate}`);
+  } catch (error) {
+    console.error('Error removing on_leave from attendance:', error);
   }
 };
 

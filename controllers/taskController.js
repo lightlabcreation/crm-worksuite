@@ -367,6 +367,9 @@ const create = async (req, res) => {
       estimated_time,
       is_recurring,
       recurring_frequency,
+      repeat_every,
+      repeat_unit,
+      cycles,
     } = req.body;
 
     // Parse arrays that might come as JSON strings from FormData
@@ -429,6 +432,11 @@ const create = async (req, res) => {
     const safeStatus = statusMap[status] || 'Incomplete';
     const safeIsRecurring = is_recurring ? 1 : 0;
     const safeRecurringFrequency = recurring_frequency ?? null;
+    
+    // Handle new recurring fields
+    const safeRepeatEvery = (is_recurring && repeat_every) ? parseInt(repeat_every) || 1 : null;
+    const safeRepeatUnit = (is_recurring && repeat_unit) ? repeat_unit : null;
+    const safeCycles = (is_recurring && cycles && cycles !== '') ? parseInt(cycles) : null;
 
     // ===============================
     // GENERATE TASK CODE
@@ -440,48 +448,60 @@ const create = async (req, res) => {
         error: "company_id is required"
       });
     }
+    
+    // Check if columns exist in database
+    const [columns] = await pool.execute(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+       WHERE TABLE_NAME = 'tasks' AND TABLE_SCHEMA = DATABASE()`
+    );
+    const columnNames = columns.map(col => col.COLUMN_NAME);
+    const hasRepeatEvery = columnNames.includes('repeat_every');
+    const hasRepeatUnit = columnNames.includes('repeat_unit');
+    const hasCycles = columnNames.includes('cycles');
+    const hasIsRecurring = columnNames.includes('is_recurring');
+    
     const code = await generateTaskCode(safeProjectId, companyId);
 
     // ===============================
     // INSERT TASK - Updated with new fields
     // ===============================
+    // Build dynamic INSERT query based on available columns
+    let insertFields = [
+      'company_id', 'code', 'title', 'description', 'sub_description', 'task_category',
+      'project_id', 'client_id', 'lead_id', 'start_date', 'due_date',
+      'status', 'priority', 'estimated_time', 'created_by'
+    ];
+    let insertValues = [
+      companyId ?? null, code, taskTitle ?? null, safeDescription ?? null,
+      safeSubDescription ?? null, safeTaskCategory ?? null,
+      safeProjectId ?? null, safeClientId ?? null, safeLeadId ?? null,
+      safeStartDate ?? null, safeDeadline ?? null,
+      safeStatus, safePriority || 'Medium', safeEstimatedTime ?? null,
+      req.userId || req.body.user_id || 1
+    ];
+    
+    // Add recurring fields if columns exist
+    if (hasIsRecurring) {
+      insertFields.push('is_recurring');
+      insertValues.push(safeIsRecurring);
+    }
+    if (hasRepeatEvery && safeRepeatEvery) {
+      insertFields.push('repeat_every');
+      insertValues.push(safeRepeatEvery);
+    }
+    if (hasRepeatUnit && safeRepeatUnit) {
+      insertFields.push('repeat_unit');
+      insertValues.push(safeRepeatUnit);
+    }
+    if (hasCycles && safeCycles) {
+      insertFields.push('cycles');
+      insertValues.push(safeCycles);
+    }
+    
+    const placeholders = insertFields.map(() => '?').join(', ');
     const [result] = await pool.execute(
-      `
-      INSERT INTO tasks (
-        company_id,
-        code,
-        title,
-        description,
-        sub_description,
-        task_category,
-        project_id,
-        client_id,
-        lead_id,
-        start_date,
-        due_date,
-        status,
-        priority,
-        estimated_time,
-        created_by
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-      [
-        companyId ?? null,
-        code,
-        taskTitle ?? null,
-        safeDescription ?? null,
-        safeSubDescription ?? null,
-        safeTaskCategory ?? null,
-        safeProjectId ?? null,
-        safeClientId ?? null,
-        safeLeadId ?? null,
-        safeStartDate ?? null,
-        safeDeadline ?? null,
-        safeStatus,
-        safePriority || 'Medium',
-        safeEstimatedTime ?? null,
-        req.userId || req.body.user_id || 1
-      ]
+      `INSERT INTO tasks (${insertFields.join(', ')}) VALUES (${placeholders})`,
+      insertValues
     );
 
     const taskId = result.insertId;
@@ -570,6 +590,103 @@ const create = async (req, res) => {
     }
 
     // ===============================
+    // CREATE RECURRING TASK INSTANCES
+    // ===============================
+    const createdTaskIds = [taskId]; // Include the original task
+    
+    if (safeIsRecurring && safeRepeatEvery && safeRepeatUnit && safeStartDate) {
+      const startDate = new Date(safeStartDate);
+      const totalCycles = safeCycles || 10; // Default to 10 if cycles not specified
+      
+      // Calculate duration between start_date and due_date for maintaining the same duration
+      let durationDays = 0;
+      if (safeDeadline) {
+        const dueDate = new Date(safeDeadline);
+        durationDays = Math.ceil((dueDate - startDate) / (1000 * 60 * 60 * 24));
+      }
+      
+      // Create recurring instances
+      for (let i = 1; i < totalCycles; i++) {
+        let nextStartDate = new Date(startDate);
+        let nextDueDate = safeDeadline ? new Date(safeDeadline) : null;
+        
+        // Calculate next date based on repeat_unit
+        if (safeRepeatUnit === 'Day(s)') {
+          nextStartDate.setDate(nextStartDate.getDate() + (safeRepeatEvery * i));
+          if (nextDueDate) {
+            nextDueDate.setDate(nextDueDate.getDate() + (safeRepeatEvery * i));
+          }
+        } else if (safeRepeatUnit === 'Week(s)') {
+          nextStartDate.setDate(nextStartDate.getDate() + (safeRepeatEvery * 7 * i));
+          if (nextDueDate) {
+            nextDueDate.setDate(nextDueDate.getDate() + (safeRepeatEvery * 7 * i));
+          }
+        } else if (safeRepeatUnit === 'Month(s)') {
+          nextStartDate.setMonth(nextStartDate.getMonth() + (safeRepeatEvery * i));
+          if (nextDueDate) {
+            nextDueDate.setMonth(nextDueDate.getMonth() + (safeRepeatEvery * i));
+          }
+        } else if (safeRepeatUnit === 'Year(s)') {
+          nextStartDate.setFullYear(nextStartDate.getFullYear() + (safeRepeatEvery * i));
+          if (nextDueDate) {
+            nextDueDate.setFullYear(nextDueDate.getFullYear() + (safeRepeatEvery * i));
+          }
+        }
+        
+        // Generate code for recurring task
+        const recurringCode = await generateTaskCode(safeProjectId, companyId);
+        
+        // Build insert fields and values for recurring task
+        let recurringInsertFields = [
+          'company_id', 'code', 'title', 'description', 'sub_description', 'task_category',
+          'project_id', 'client_id', 'lead_id', 'start_date', 'due_date',
+          'status', 'priority', 'estimated_time', 'created_by'
+        ];
+        let recurringInsertValues = [
+          companyId ?? null, recurringCode, taskTitle ?? null, safeDescription ?? null,
+          safeSubDescription ?? null, safeTaskCategory ?? null,
+          safeProjectId ?? null, safeClientId ?? null, safeLeadId ?? null,
+          nextStartDate.toISOString().split('T')[0], nextDueDate ? nextDueDate.toISOString().split('T')[0] : null,
+          safeStatus, safePriority || 'Medium', safeEstimatedTime ?? null,
+          req.userId || req.body.user_id || 1
+        ];
+        
+        // Add recurring fields (but mark as non-recurring for instances)
+        if (hasIsRecurring) {
+          recurringInsertFields.push('is_recurring');
+          recurringInsertValues.push(0); // Instances are not recurring themselves
+        }
+        
+        const recurringPlaceholders = recurringInsertFields.map(() => '?').join(', ');
+        const [recurringResult] = await pool.execute(
+          `INSERT INTO tasks (${recurringInsertFields.join(', ')}) VALUES (${recurringPlaceholders})`,
+          recurringInsertValues
+        );
+        
+        const recurringTaskId = recurringResult.insertId;
+        createdTaskIds.push(recurringTaskId);
+        
+        // Copy assignees to recurring task
+        if (allAssignees.length > 0) {
+          const recurringAssigneeValues = allAssignees.map(userId => [recurringTaskId, userId]);
+          await pool.query(
+            `INSERT INTO task_assignees (task_id, user_id) VALUES ?`,
+            [recurringAssigneeValues]
+          );
+        }
+        
+        // Copy tags to recurring task
+        if (allTags.length > 0) {
+          const recurringTagValues = allTags.map(tag => [recurringTaskId, tag]);
+          await pool.query(
+            `INSERT INTO task_tags (task_id, tag) VALUES ?`,
+            [recurringTagValues]
+          );
+        }
+      }
+    }
+
+    // ===============================
     // FETCH CREATED TASK
     // ===============================
     const [tasks] = await pool.execute(
@@ -580,7 +697,10 @@ const create = async (req, res) => {
     res.status(201).json({
       success: true,
       data: tasks[0],
-      message: "Task created successfully"
+      message: safeIsRecurring && safeCycles 
+        ? `Task and ${safeCycles - 1} recurring instances created successfully`
+        : "Task created successfully",
+      created_count: createdTaskIds.length
     });
 
   } catch (error) {

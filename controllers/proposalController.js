@@ -391,27 +391,27 @@ const create = async (req, res) => {
 
     // Prepare insert values
     const insertValues = [
-      companyId || null,
-      proposal_number || null,
+        companyId || null,
+        proposal_number || null,
       formattedProposalDate,
       formattedValidTill, // Always has a value now
-      (currency && currency !== '') ? currency : 'USD',
-      (client_id && client_id !== '') ? parseInt(client_id) : null,
-      (lead_id && lead_id !== '') ? parseInt(lead_id) : null,
-      (project_id && project_id !== '') ? parseInt(project_id) : null,
+        (currency && currency !== '') ? currency : 'USD',
+        (client_id && client_id !== '') ? parseInt(client_id) : null,
+        (lead_id && lead_id !== '') ? parseInt(lead_id) : null,
+        (project_id && project_id !== '') ? parseInt(project_id) : null,
       taxValue,
       secondTaxValue,
-      (note && note !== '') ? note : null,
-      finalDescription,
-      (terms && terms !== '') ? terms : 'Thank you for your business.',
+        (note && note !== '') ? note : null,
+        finalDescription,
+        (terms && terms !== '') ? terms : 'Thank you for your business.',
       parseFloat(discount) || 0,
-      mappedDiscountType,
+        mappedDiscountType,
       parseFloat(totals.sub_total) || 0,
       parseFloat(totals.discount_amount) || 0,
       parseFloat(totals.tax_amount) || 0,
       parseFloat(totals.total) || 0,
-      mappedStatus || 'Draft',
-      effectiveCreatedBy || 1
+        mappedStatus || 'Draft',
+        effectiveCreatedBy || 1
     ];
 
     console.log('Insert Values:', insertValues);
@@ -463,26 +463,26 @@ const create = async (req, res) => {
           // Truncate item_name if too long (max 255 chars)
           const itemName = String(item.item_name || '').substring(0, 255);
           
-          await connection.execute(
-            `INSERT INTO estimate_items 
-             (estimate_id, item_name, description, quantity, unit, unit_price, tax, tax_rate, amount)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              proposalId,
+        await connection.execute(
+          `INSERT INTO estimate_items 
+           (estimate_id, item_name, description, quantity, unit, unit_price, tax, tax_rate, amount)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            proposalId,
               itemName,
-              item.description || '',
+            item.description || '',
               parseFloat(item.quantity) || 1,
               unitValue, // Now guaranteed to be valid ENUM value
               parseFloat(item.unit_price) || 0,
-              item.tax || '',
+            item.tax || '',
               parseFloat(item.tax_rate) || 0,
               parseFloat(item.amount) || 0
-            ]
-          );
+          ]
+        );
         } catch (itemError) {
           console.error('Error inserting item:', item, itemError);
           throw itemError;
-        }
+      }
       }
     } else {
       console.log('No items to insert');
@@ -743,7 +743,7 @@ const convertToInvoice = async (req, res) => {
 const sendEmail = async (req, res) => {
   try {
     const { id } = req.params;
-    const { to, subject, message } = req.body;
+    const { to, cc, bcc, subject, message } = req.body;
 
     // Get proposal
     const [proposals] = await pool.execute(
@@ -798,8 +798,11 @@ const sendEmail = async (req, res) => {
       return res.status(400).json({ success: false, error: 'Recipient email is required' });
     }
 
+    // Handle CC and BCC from request body
     await sendEmailUtil({
       to: recipientEmail,
+      cc: req.body.cc || undefined,
+      bcc: req.body.bcc || undefined,
       subject: emailSubject,
       html: emailHTML,
       text: `Please view the proposal at: ${publicUrl}`

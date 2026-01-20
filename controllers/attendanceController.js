@@ -1,6 +1,22 @@
 const pool = require('../config/db');
 
 /**
+ * Calculate distance between two coordinates using Haversine formula
+ * Returns distance in meters
+ */
+const calculateDistance = (lat1, lon1, lat2, lon2) => {
+  const R = 6371000; // Earth's radius in meters
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = 
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c; // Distance in meters
+};
+
+/**
  * Get all attendance records
  * GET /api/v1/attendance
  */
@@ -507,12 +523,72 @@ const checkIn = async (req, res) => {
   try {
     const companyId = req.body.company_id || req.query.company_id || req.companyId;
     const userId = req.body.user_id || req.userId;
+    const location = req.body.location; // { latitude, longitude }
+    const ipAddress = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for']?.split(',')[0];
 
     if (!companyId || !userId) {
       return res.status(400).json({
         success: false,
         error: 'company_id and user_id are required'
       });
+    }
+
+    // Fetch attendance settings
+    const [settings] = await pool.execute(
+      `SELECT * FROM attendance_settings WHERE company_id = ?`,
+      [companyId]
+    );
+
+    const attendanceSettings = settings.length > 0 ? settings[0] : null;
+
+    // Check if employee self clock-in is allowed
+    if (attendanceSettings && !attendanceSettings.allow_employee_self_clock_in_out && !attendanceSettings.allow_self_clock_in) {
+      return res.status(403).json({
+        success: false,
+        error: 'Self clock-in is not allowed. Please contact your administrator.'
+      });
+    }
+
+    // Validate location if location check is enabled
+    if (attendanceSettings && (attendanceSettings.clock_in_location_radius_check || attendanceSettings.check_location_radius)) {
+      if (!location || !location.latitude || !location.longitude) {
+        return res.status(400).json({
+          success: false,
+          error: 'Location is required for clock-in. Please enable location services.'
+        });
+      }
+
+      // Check if location is within radius (if office location is set)
+      if (attendanceSettings.office_latitude && attendanceSettings.office_longitude) {
+        const radius = attendanceSettings.clock_in_location_radius_value || attendanceSettings.location_radius_meters || 100;
+        const distance = calculateDistance(
+          parseFloat(attendanceSettings.office_latitude),
+          parseFloat(attendanceSettings.office_longitude),
+          parseFloat(location.latitude),
+          parseFloat(location.longitude)
+        );
+
+        if (distance > radius) {
+          return res.status(400).json({
+            success: false,
+            error: `You are outside the allowed radius (${radius}m). Please be within the office location to clock in.`
+          });
+        }
+      }
+    }
+
+    // Validate IP address if IP check is enabled
+    if (attendanceSettings && (attendanceSettings.clock_in_ip_check || attendanceSettings.check_ip_address)) {
+      const allowedIPs = attendanceSettings.clock_in_ip_addresses 
+        ? JSON.parse(attendanceSettings.clock_in_ip_addresses || '[]')
+        : (attendanceSettings.allowed_ip_addresses ? attendanceSettings.allowed_ip_addresses.split(',').map(ip => ip.trim()) : []);
+
+      if (allowedIPs.length > 0 && !allowedIPs.includes(ipAddress)) {
+        return res.status(403).json({
+          success: false,
+          error: 'Your IP address is not allowed for clock-in. Please contact your administrator.'
+        });
+      }
     }
 
     const today = new Date().toISOString().split('T')[0];
@@ -539,22 +615,41 @@ const checkIn = async (req, res) => {
     }
 
     let attendanceId;
+    const locationData = location && attendanceSettings?.save_clock_in_location 
+      ? JSON.stringify({ latitude: location.latitude, longitude: location.longitude })
+      : null;
 
     if (existing.length > 0) {
       // Update existing record with check_in
-      await pool.execute(
-        `UPDATE attendance SET check_in = ?, status = 'Present', updated_at = NOW() WHERE id = ?`,
-        [currentTime, existing[0].id]
-      );
+      if (locationData) {
+        await pool.execute(
+          `UPDATE attendance SET check_in = ?, status = 'Present', clock_in_location = ?, updated_at = NOW() WHERE id = ?`,
+          [currentTime, locationData, existing[0].id]
+        );
+      } else {
+        await pool.execute(
+          `UPDATE attendance SET check_in = ?, status = 'Present', updated_at = NOW() WHERE id = ?`,
+          [currentTime, existing[0].id]
+        );
+      }
       attendanceId = existing[0].id;
     } else {
       // Create new attendance record
-      const [result] = await pool.execute(
-        `INSERT INTO attendance (company_id, user_id, date, status, check_in)
-         VALUES (?, ?, ?, 'Present', ?)`,
-        [companyId, userId, today, currentTime]
-      );
-      attendanceId = result.insertId;
+      if (locationData) {
+        const [result] = await pool.execute(
+          `INSERT INTO attendance (company_id, user_id, date, status, check_in, clock_in_location)
+           VALUES (?, ?, ?, 'Present', ?, ?)`,
+          [companyId, userId, today, currentTime, locationData]
+        );
+        attendanceId = result.insertId;
+      } else {
+        const [result] = await pool.execute(
+          `INSERT INTO attendance (company_id, user_id, date, status, check_in)
+           VALUES (?, ?, ?, 'Present', ?)`,
+          [companyId, userId, today, currentTime]
+        );
+        attendanceId = result.insertId;
+      }
     }
 
     res.json({

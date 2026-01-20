@@ -216,7 +216,9 @@ const create = async (req, res) => {
       name,
       subject,
       body,
-      type
+      type,
+      template_key,
+      category
     } = req.body;
 
     // Validation
@@ -235,17 +237,44 @@ const create = async (req, res) => {
       });
     }
 
+    // Handle template_key - generate unique key if not provided to avoid NULL constraint issues
+    let finalTemplateKey = template_key || null;
+    if (!finalTemplateKey) {
+      // Generate a unique template_key based on name and timestamp to avoid NULL conflicts
+      const sanitizedName = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').substring(0, 50);
+      const timestamp = Date.now();
+      finalTemplateKey = `${sanitizedName}_${timestamp}`;
+    }
+
+    // Check for duplicate template_key for this company (if unique constraint exists)
+    if (finalTemplateKey) {
+      const [existing] = await pool.execute(
+        `SELECT id FROM email_templates 
+         WHERE company_id = ? AND template_key = ? AND is_deleted = 0`,
+        [companyId, finalTemplateKey]
+      );
+
+      if (existing.length > 0) {
+        return res.status(409).json({
+          success: false,
+          error: `A template with key '${finalTemplateKey}' already exists for this company`
+        });
+      }
+    }
+
     // Insert template
     const [result] = await pool.execute(
       `INSERT INTO email_templates (
-        company_id, name, subject, body, type
-      ) VALUES (?, ?, ?, ?, ?)`,
+        company_id, name, subject, body, type, template_key, category
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
         companyId,
         name,
         subject,
         body,
-        type || null
+        type || null,
+        finalTemplateKey,
+        category || null
       ]
     );
 
@@ -282,6 +311,15 @@ const create = async (req, res) => {
     });
   } catch (error) {
     console.error('Create email template error:', error);
+    
+    // Handle duplicate key error specifically
+    if (error.code === 'ER_DUP_ENTRY' || error.message.includes('uq_company_template_key')) {
+      return res.status(409).json({
+        success: false,
+        error: 'A template with the same key already exists for this company. Please use a different template key or update the existing template.'
+      });
+    }
+    
     res.status(500).json({ 
       success: false, 
       error: error.message || 'Failed to create email template' 
@@ -433,9 +471,11 @@ const getByTemplateKey = async (req, res) => {
     );
     
     if (templates.length === 0) {
-      return res.status(404).json({ 
+      // Return 200 with success: false instead of 404 for graceful handling
+      return res.status(200).json({ 
         success: false, 
-        error: `Email template with key '${template_key}' not found` 
+        error: `Email template with key '${template_key}' not found`,
+        data: null
       });
     }
     

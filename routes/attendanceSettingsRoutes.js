@@ -3,57 +3,56 @@ const router = express.Router();
 const attendanceSettingsController = require('../controllers/attendanceSettingsController');
 const { verifyToken, requireRole, ROLES } = require('../middleware/auth');
 
-// All routes require Admin authentication
+// All routes require authentication
 router.use(verifyToken);
-router.use(requireRole(ROLES.ADMIN));
 
 // ================================================
 // ATTENDANCE SETTINGS ROUTES
 // ================================================
 
-// GET /api/admin/attendance-settings - Get attendance settings
+// GET /api/admin/attendance-settings - Get attendance settings (Allow both ADMIN and EMPLOYEE to view)
 router.get('/', attendanceSettingsController.getAttendanceSettings);
 
-// PUT /api/admin/attendance-settings - Update attendance settings
-router.put('/', attendanceSettingsController.updateAttendanceSettings);
+// PUT /api/admin/attendance-settings - Update attendance settings (Admin only)
+router.put('/', requireRole(ROLES.ADMIN), attendanceSettingsController.updateAttendanceSettings);
 
 // ================================================
 // SHIFT ROUTES
 // ================================================
 
-// GET /api/admin/attendance-settings/shifts - Get all shifts
+// GET /api/admin/attendance-settings/shifts - Get all shifts (Allow both ADMIN and EMPLOYEE to view)
 router.get('/shifts', attendanceSettingsController.getAllShifts);
 
-// GET /api/admin/attendance-settings/shifts/:id - Get single shift
+// GET /api/admin/attendance-settings/shifts/:id - Get single shift (Allow both ADMIN and EMPLOYEE to view)
 router.get('/shifts/:id', attendanceSettingsController.getShiftById);
 
-// POST /api/admin/attendance-settings/shifts - Create new shift
-router.post('/shifts', attendanceSettingsController.createShift);
+// POST /api/admin/attendance-settings/shifts - Create new shift (Admin only)
+router.post('/shifts', requireRole(ROLES.ADMIN), attendanceSettingsController.createShift);
 
-// PUT /api/admin/attendance-settings/shifts/:id - Update shift
-router.put('/shifts/:id', attendanceSettingsController.updateShift);
+// PUT /api/admin/attendance-settings/shifts/:id - Update shift (Admin only)
+router.put('/shifts/:id', requireRole(ROLES.ADMIN), attendanceSettingsController.updateShift);
 
-// DELETE /api/admin/attendance-settings/shifts/:id - Delete shift
-router.delete('/shifts/:id', attendanceSettingsController.deleteShift);
+// DELETE /api/admin/attendance-settings/shifts/:id - Delete shift (Admin only)
+router.delete('/shifts/:id', requireRole(ROLES.ADMIN), attendanceSettingsController.deleteShift);
 
-// POST /api/admin/attendance-settings/shifts/:id/set-default - Set default shift
-router.post('/shifts/:id/set-default', attendanceSettingsController.setDefaultShift);
+// POST /api/admin/attendance-settings/shifts/:id/set-default - Set default shift (Admin only)
+router.post('/shifts/:id/set-default', requireRole(ROLES.ADMIN), attendanceSettingsController.setDefaultShift);
 
 // ================================================
 // SHIFT ROTATION ROUTES
 // ================================================
 
-// GET /api/admin/attendance-settings/shift-rotations - Get all rotations
-router.get('/shift-rotations', attendanceSettingsController.getAllRotations);
+// GET /api/admin/attendance-settings/shift-rotations - Get all rotations (Admin only)
+router.get('/shift-rotations', requireRole(ROLES.ADMIN), attendanceSettingsController.getAllRotations);
 
-// POST /api/admin/attendance-settings/shift-rotations - Create rotation
-router.post('/shift-rotations', attendanceSettingsController.createRotation);
+// POST /api/admin/attendance-settings/shift-rotations - Create rotation (Admin only)
+router.post('/shift-rotations', requireRole(ROLES.ADMIN), attendanceSettingsController.createRotation);
 
-// DELETE /api/admin/attendance-settings/shift-rotations/:id - Delete rotation
-router.delete('/shift-rotations/:id', attendanceSettingsController.deleteRotation);
+// DELETE /api/admin/attendance-settings/shift-rotations/:id - Delete rotation (Admin only)
+router.delete('/shift-rotations/:id', requireRole(ROLES.ADMIN), attendanceSettingsController.deleteRotation);
 
-// POST /api/admin/attendance-settings/shift-rotations/run - Run rotation
-router.post('/shift-rotations/run', attendanceSettingsController.runRotation);
+// POST /api/admin/attendance-settings/shift-rotations/run - Run rotation (Admin only)
+router.post('/shift-rotations/run', requireRole(ROLES.ADMIN), attendanceSettingsController.runRotation);
 
 module.exports = router;
 

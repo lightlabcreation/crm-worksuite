@@ -237,6 +237,10 @@ const getById = async (req, res) => {
 
 const create = async (req, res) => {
   try {
+    console.log('=== CREATE ESTIMATE REQUEST ===');
+    console.log('Request body:', JSON.stringify(req.body, null, 2));
+    console.log('Request query:', req.query);
+
     const {
       estimate_date, proposal_date, valid_till, currency, client_id, project_id, lead_id,
       calculate_tax, description, note, terms, tax, second_tax,
@@ -246,7 +250,10 @@ const create = async (req, res) => {
     // No required validation - save whatever data is provided
 
     const companyId = req.body.company_id || req.query.company_id || 1;
+    console.log('Company ID:', companyId);
+    
     const estimate_number = await generateEstimateNumber(companyId);
+    console.log('Generated Estimate Number:', estimate_number);
 
     // Get created_by from various sources - body, query, req.userId, or default to 1 (admin)
     const effectiveCreatedBy = req.body.user_id || req.query.user_id || req.userId || 1;
@@ -278,8 +285,33 @@ const create = async (req, res) => {
     // Use estimate_date or proposal_date for the proposal_date field
     const estimateDateValue = estimate_date || proposal_date || null;
 
+    // Handle valid_till - if null, default to 30 days from estimate_date or current date
+    let validTillValue = valid_till;
+    if (!validTillValue || validTillValue === '') {
+      const baseDate = estimateDateValue ? new Date(estimateDateValue) : new Date();
+      const defaultValidTill = new Date(baseDate);
+      defaultValidTill.setDate(defaultValidTill.getDate() + 30);
+      validTillValue = defaultValidTill.toISOString().split('T')[0];
+      console.log('Setting default valid_till to 30 days from estimate_date:', validTillValue);
+    }
+
+    // Convert tax and second_tax to strings if they are not null/empty
+    const taxValue = tax ? String(tax) : null;
+    const secondTaxValue = second_tax ? String(second_tax) : null;
+
     // Insert estimate
     // Convert all undefined/empty values to null explicitly
+    console.log('Inserting estimate with values:', {
+      companyId,
+      estimate_number,
+      estimateDateValue,
+      validTillValue,
+      currency,
+      client_id,
+      project_id,
+      lead_id
+    });
+
     const [result] = await pool.execute(
       `INSERT INTO estimates (
         company_id, estimate_number, proposal_date, valid_till, currency, client_id, project_id, lead_id,
@@ -290,7 +322,7 @@ const create = async (req, res) => {
         companyId || null,
         estimate_number || null,
         (estimateDateValue && estimateDateValue !== '') ? estimateDateValue : null,
-        (valid_till && valid_till !== '') ? valid_till : null,
+        (validTillValue && validTillValue !== '') ? validTillValue : null,
         (currency && currency !== '') ? currency : 'USD',
         (client_id && client_id !== '') ? client_id : null,
         (project_id && project_id !== '') ? project_id : null,
@@ -299,8 +331,8 @@ const create = async (req, res) => {
         (description && description !== '') ? description : null,
         (note && note !== '') ? note : null,
         (terms && terms !== '') ? terms : 'Thank you for your business.',
-        (tax && tax !== '') ? tax : null,
-        (second_tax && second_tax !== '') ? second_tax : null,
+        taxValue,
+        secondTaxValue,
         (discount !== undefined && discount !== null && discount !== '') ? parseFloat(discount) : 0,
         // Map discount_type to valid ENUM values: '%' or 'fixed'
         (discount_type === 'fixed' || discount_type === 'Fixed' || discount_type === 'amount') ? 'fixed' : '%',
@@ -315,13 +347,40 @@ const create = async (req, res) => {
     );
 
     const estimateId = result.insertId;
+    console.log('Estimate ID:', estimateId);
+
+    if (!estimateId) {
+      throw new Error('Failed to get insert ID after creating estimate');
+    }
 
     // Insert items - calculate amount if not provided
     if (items.length > 0) {
+      console.log('Inserting items:', items.length);
+      
+      // Validate and map unit to valid ENUM values
+      const validUnits = ['Pcs', 'Kg', 'Hours', 'Days'];
+      
       const itemValues = items.map(item => {
         const quantity = parseFloat(item.quantity || 1);
         const unitPrice = parseFloat(item.unit_price || 0);
         const taxRate = parseFloat(item.tax_rate || 0);
+
+        // Validate and map unit to valid ENUM values
+        let unitValue = item.unit || 'Pcs';
+        if (!validUnits.includes(unitValue)) {
+          const unitLower = String(unitValue).toLowerCase().trim();
+          if (unitLower.includes('pc') || unitLower.includes('piece')) {
+            unitValue = 'Pcs';
+          } else if (unitLower.includes('kg') || unitLower.includes('kilogram')) {
+            unitValue = 'Kg';
+          } else if (unitLower.includes('hour')) {
+            unitValue = 'Hours';
+          } else if (unitLower.includes('day')) {
+            unitValue = 'Days';
+          } else {
+            unitValue = 'Pcs';
+          }
+        }
 
         // Calculate amount: (quantity * unit_price) + tax
         let amount = quantity * unitPrice;
@@ -334,12 +393,15 @@ const create = async (req, res) => {
           ? parseFloat(item.amount)
           : amount;
 
+        // Truncate item_name if too long (max 255 chars)
+        const itemName = String(item.item_name || '').substring(0, 255);
+
         return [
           estimateId,
-          item.item_name,
+          itemName,
           item.description || null,
           quantity,
-          item.unit || 'Pcs',
+          unitValue, // Now guaranteed to be valid ENUM value
           unitPrice,
           item.tax || null,
           taxRate,
@@ -348,13 +410,27 @@ const create = async (req, res) => {
         ];
       });
 
-      await pool.query(
-        `INSERT INTO estimate_items (
-          estimate_id, item_name, description, quantity, unit, unit_price,
-          tax, tax_rate, file_path, amount
-        ) VALUES ?`,
-        [itemValues]
-      );
+      console.log('Item values prepared:', itemValues.length);
+
+      try {
+        await pool.query(
+          `INSERT INTO estimate_items (
+            estimate_id, item_name, description, quantity, unit, unit_price,
+            tax, tax_rate, file_path, amount
+          ) VALUES ?`,
+          [itemValues]
+        );
+        console.log('Items inserted successfully');
+      } catch (itemError) {
+        console.error('Error inserting items:', itemError);
+        console.error('Item error details:', {
+          message: itemError.message,
+          code: itemError.code,
+          sqlState: itemError.sqlState,
+          sqlMessage: itemError.sqlMessage
+        });
+        throw itemError; // Re-throw to be caught by outer catch
+      }
     }
 
     // Get created estimate
@@ -376,8 +452,23 @@ const create = async (req, res) => {
       message: 'Estimate created successfully'
     });
   } catch (error) {
-    console.error('Create estimate error:', error);
-    res.status(500).json({ success: false, error: 'Failed to create estimate' });
+    console.error('=== CREATE ESTIMATE ERROR ===');
+    console.error('Error:', error);
+    console.error('Error message:', error.message);
+    console.error('Error code:', error.code);
+    console.error('Error SQL State:', error.sqlState);
+    console.error('Error SQL Message:', error.sqlMessage);
+    console.error('Error stack:', error.stack);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to create estimate',
+      details: process.env.NODE_ENV === 'development' ? {
+        message: error.message,
+        code: error.code,
+        sqlState: error.sqlState,
+        sqlMessage: error.sqlMessage
+      } : undefined
+    });
   }
 };
 
@@ -881,9 +972,20 @@ const sendEmail = async (req, res) => {
     const { id } = req.params;
     const { to, subject, message, cc, bcc } = req.body;
 
-    // Get estimate
+    // Get estimate with client contact email
+    // First try to get primary contact, fallback to any contact
     const [estimates] = await pool.execute(
-      `SELECT e.*, c.company_name as client_name, c.email as client_email, comp.name as company_name
+      `SELECT e.*, 
+              c.company_name as client_name, 
+              COALESCE(
+                (SELECT email FROM client_contacts WHERE client_id = c.id AND is_primary = 1 AND is_deleted = 0 LIMIT 1),
+                (SELECT email FROM client_contacts WHERE client_id = c.id AND is_deleted = 0 LIMIT 1)
+              ) as client_email,
+              COALESCE(
+                (SELECT name FROM client_contacts WHERE client_id = c.id AND is_primary = 1 AND is_deleted = 0 LIMIT 1),
+                (SELECT name FROM client_contacts WHERE client_id = c.id AND is_deleted = 0 LIMIT 1)
+              ) as contact_name,
+              comp.name as company_name
        FROM estimates e
        LEFT JOIN clients c ON e.client_id = c.id
        LEFT JOIN companies comp ON e.company_id = comp.id
@@ -933,10 +1035,11 @@ const sendEmail = async (req, res) => {
       return res.status(400).json({ success: false, error: 'Recipient email is required' });
     }
 
+    // Handle CC and BCC from request body
     await sendEmailUtil({
       to: recipientEmail,
-      cc: cc,
-      bcc: bcc,
+      cc: req.body.cc || cc || undefined,
+      bcc: req.body.bcc || bcc || undefined,
       subject: emailSubject,
       html: emailHTML,
       text: `Please view the estimate at: ${publicUrl}`
