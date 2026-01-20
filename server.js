@@ -78,7 +78,7 @@ app.use(
       "https://crm-worksuit.netlify.app", // ✅ Fixed
       "https://crm-new-updated.netlify.app", // ✅ Fixed
       "https://worksuit-crm.kiaantechnology.com",
-      "kiaan-crm.netlify.app"
+      "https://kiaan-crm.netlify.app"
     ],
     credentials: true
   })
