@@ -10,10 +10,28 @@ const pool = require('../config/db');
  */
 const getAll = async (req, res) => {
   try {
+    console.log('=== GET ALL NOTIFICATIONS ===');
+    console.log('Query params:', req.query);
+    
     // No pagination - return all notifications
     const userId = req.query.user_id || req.body.user_id || 1;
     const is_read = req.query.is_read;
     const type = req.query.type;
+
+    // Check if related_entity columns exist
+    let hasRelatedEntityColumns = false;
+    try {
+      const [columns] = await pool.execute(
+        `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+         WHERE TABLE_SCHEMA = DATABASE() 
+         AND TABLE_NAME = 'notifications' 
+         AND (COLUMN_NAME = 'related_entity_type' OR COLUMN_NAME = 'related_entity_id')`
+      );
+      hasRelatedEntityColumns = columns.length >= 2;
+      console.log('Has related_entity columns:', hasRelatedEntityColumns);
+    } catch (e) {
+      console.warn('Error checking columns:', e.message);
+    }
 
     let whereClause = 'WHERE n.is_deleted = 0';
     const params = [];
@@ -34,15 +52,17 @@ const getAll = async (req, res) => {
       params.push(type);
     }
 
-    // Filter by related entity if provided
-    if (req.query.related_entity_type) {
-      whereClause += ' AND n.related_entity_type = ?';
-      params.push(req.query.related_entity_type);
-    }
+    // Filter by related entity if provided and columns exist
+    if (hasRelatedEntityColumns) {
+      if (req.query.related_entity_type) {
+        whereClause += ' AND n.related_entity_type = ?';
+        params.push(req.query.related_entity_type);
+      }
 
-    if (req.query.related_entity_id) {
-      whereClause += ' AND n.related_entity_id = ?';
-      params.push(req.query.related_entity_id);
+      if (req.query.related_entity_id) {
+        whereClause += ' AND n.related_entity_id = ?';
+        params.push(parseInt(req.query.related_entity_id));
+      }
     }
 
     // Filter by company_id if provided
@@ -50,6 +70,9 @@ const getAll = async (req, res) => {
       whereClause += ' AND n.company_id = ?';
       params.push(req.query.company_id);
     }
+
+    console.log('SQL Query:', `SELECT n.*, u.name as created_by_name FROM notifications n LEFT JOIN users u ON n.created_by = u.id ${whereClause} ORDER BY n.created_at DESC`);
+    console.log('Params:', params);
 
     // Get all notifications without pagination
     const [notifications] = await pool.execute(
@@ -61,6 +84,8 @@ const getAll = async (req, res) => {
       params
     );
 
+    console.log('Notifications found:', notifications.length);
+
     res.json({
       success: true,
       data: notifications
@@ -68,8 +93,11 @@ const getAll = async (req, res) => {
   } catch (error) {
     console.error('Get notifications error:', error);
     console.error('Error details:', error.sqlMessage || error.message);
+    console.error('Error stack:', error.stack);
+    
     // If error is due to missing columns, return empty array instead of error
     if (error.sqlMessage && (error.sqlMessage.includes('Unknown column') || error.sqlMessage.includes('related_entity'))) {
+      console.warn('Missing related_entity columns, returning empty array');
       return res.json({
         success: true,
         data: []
@@ -77,7 +105,8 @@ const getAll = async (req, res) => {
     }
     res.status(500).json({
       success: false,
-      error: 'Failed to fetch notifications'
+      error: 'Failed to fetch notifications',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
@@ -186,20 +215,42 @@ const create = async (req, res) => {
       }
     }
 
+    // Check if related_entity columns exist
+    let hasRelatedEntityColumns = false;
+    try {
+      const [columns] = await pool.execute(
+        `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+         WHERE TABLE_SCHEMA = DATABASE() 
+         AND TABLE_NAME = 'notifications' 
+         AND (COLUMN_NAME = 'related_entity_type' OR COLUMN_NAME = 'related_entity_id')`
+      );
+      hasRelatedEntityColumns = columns.length >= 2;
+    } catch (e) {
+      console.warn('Error checking columns:', e.message);
+    }
+
+    let insertFields = 'company_id, user_id, type, title, message, link';
+    let insertValues = [companyId || null, user_id, type, title, message, link || null];
+    let placeholders = '?, ?, ?, ?, ?, ?';
+
+    if (hasRelatedEntityColumns) {
+      insertFields += ', related_entity_type, related_entity_id';
+      insertValues.push(related_entity_type || null, related_entity_id || null);
+      placeholders += ', ?, ?';
+    }
+
+    // Add created_at at the end
+    insertFields += ', created_at';
+    placeholders += ', NOW()';
+
+    console.log('=== CREATE NOTIFICATION ===');
+    console.log('Insert fields:', insertFields);
+    console.log('Insert values:', insertValues);
+    console.log('Has related_entity columns:', hasRelatedEntityColumns);
+
     const [result] = await pool.execute(
-      `INSERT INTO notifications (
-        company_id, user_id, type, title, message, link, related_entity_type, related_entity_id, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
-      [
-        companyId || null,
-        user_id,
-        type,
-        title,
-        message,
-        link || null,
-        related_entity_type || null,
-        related_entity_id || null
-      ]
+      `INSERT INTO notifications (${insertFields}) VALUES (${placeholders})`,
+      insertValues
     );
 
     const [newNotification] = await pool.execute(

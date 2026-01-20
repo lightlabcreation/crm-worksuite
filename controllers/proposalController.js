@@ -325,6 +325,10 @@ const getById = async (req, res) => {
 const create = async (req, res) => {
   const connection = await pool.getConnection();
   try {
+    console.log('=== CREATE PROPOSAL REQUEST ===');
+    console.log('Request Body:', JSON.stringify(req.body, null, 2));
+    console.log('Request Query:', req.query);
+    
     await connection.beginTransaction();
 
     const {
@@ -333,8 +337,13 @@ const create = async (req, res) => {
     } = req.body;
 
     const companyId = req.body.company_id || req.query.company_id || req.companyId || 1;
+    console.log('Company ID:', companyId);
+    
     const proposal_number = await generateProposalNumber(companyId);
+    console.log('Generated Proposal Number:', proposal_number);
+    
     const effectiveCreatedBy = req.body.user_id || req.query.user_id || req.userId || req.user?.id || 1;
+    console.log('Created By:', effectiveCreatedBy);
 
     // Map status
     let mappedStatus = 'Draft';
@@ -359,6 +368,55 @@ const create = async (req, res) => {
     // Use title in description if no description provided
     const finalDescription = description || title || null;
 
+    // Format dates
+    const formattedProposalDate = formatDateForMySQL(proposal_date);
+    let formattedValidTill = formatDateForMySQL(valid_till);
+    
+    // If valid_till is null, set a default date (30 days from proposal_date or today)
+    if (!formattedValidTill) {
+      if (formattedProposalDate) {
+        const proposalDateObj = new Date(formattedProposalDate);
+        proposalDateObj.setDate(proposalDateObj.getDate() + 30);
+        formattedValidTill = proposalDateObj.toISOString().split('T')[0];
+      } else {
+        const today = new Date();
+        today.setDate(today.getDate() + 30);
+        formattedValidTill = today.toISOString().split('T')[0];
+      }
+    }
+
+    // Format tax values as strings (schema has VARCHAR(50))
+    const taxValue = (tax && tax !== '') ? String(tax) : null;
+    const secondTaxValue = (second_tax && second_tax !== '') ? String(second_tax) : null;
+
+    // Prepare insert values
+    const insertValues = [
+      companyId || null,
+      proposal_number || null,
+      formattedProposalDate,
+      formattedValidTill, // Always has a value now
+      (currency && currency !== '') ? currency : 'USD',
+      (client_id && client_id !== '') ? parseInt(client_id) : null,
+      (lead_id && lead_id !== '') ? parseInt(lead_id) : null,
+      (project_id && project_id !== '') ? parseInt(project_id) : null,
+      taxValue,
+      secondTaxValue,
+      (note && note !== '') ? note : null,
+      finalDescription,
+      (terms && terms !== '') ? terms : 'Thank you for your business.',
+      parseFloat(discount) || 0,
+      mappedDiscountType,
+      parseFloat(totals.sub_total) || 0,
+      parseFloat(totals.discount_amount) || 0,
+      parseFloat(totals.tax_amount) || 0,
+      parseFloat(totals.total) || 0,
+      mappedStatus || 'Draft',
+      effectiveCreatedBy || 1
+    ];
+
+    console.log('Insert Values:', insertValues);
+    console.log('Totals:', totals);
+
     // Insert proposal with lead_id and project_id
     const [result] = await connection.execute(
       `INSERT INTO estimates (
@@ -366,53 +424,68 @@ const create = async (req, res) => {
         lead_id, project_id, tax, second_tax, note, description, terms, discount, discount_type,
         sub_total, discount_amount, tax_amount, total, status, created_by
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        companyId || null,
-        proposal_number || null,
-        formatDateForMySQL(proposal_date),
-        formatDateForMySQL(valid_till),
-        (currency && currency !== '') ? currency : 'USD',
-        (client_id && client_id !== '') ? parseInt(client_id) : null,
-        (lead_id && lead_id !== '') ? parseInt(lead_id) : null,
-        (project_id && project_id !== '') ? parseInt(project_id) : null,
-        (tax && tax !== '') ? tax : null,
-        (second_tax && second_tax !== '') ? second_tax : null,
-        (note && note !== '') ? note : null,
-        finalDescription,
-        (terms && terms !== '') ? terms : 'Thank you for your business.',
-        discount || 0,
-        mappedDiscountType,
-        totals.sub_total,
-        totals.discount_amount,
-        totals.tax_amount,
-        totals.total,
-        mappedStatus || 'Draft',
-        effectiveCreatedBy || 1
-      ]
+      insertValues
     );
 
     const proposalId = result.insertId;
+    console.log('Proposal ID:', proposalId);
+
+    if (!proposalId) {
+      throw new Error('Failed to get insert ID after creating proposal');
+    }
 
     // Insert items
     if (items && Array.isArray(items) && items.length > 0) {
+      console.log('Inserting items:', items.length);
       for (const item of items) {
-        await connection.execute(
-          `INSERT INTO estimate_items 
-           (estimate_id, item_name, description, quantity, unit, unit_price, tax, tax_rate, amount)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            proposalId,
-            item.item_name || '',
-            item.description || '',
-            item.quantity || 1,
-            item.unit || 'Pcs',
-            item.unit_price || 0,
-            item.tax || '',
-            item.tax_rate || 0,
-            item.amount || 0
-          ]
-        );
+        try {
+          // Validate and map unit to valid ENUM values
+          const validUnits = ['Pcs', 'Kg', 'Hours', 'Days'];
+          let unitValue = item.unit || 'Pcs';
+          
+          // If unit is not in valid enum, try to map common values
+          if (!validUnits.includes(unitValue)) {
+            const unitLower = String(unitValue).toLowerCase().trim();
+            if (unitLower.includes('pc') || unitLower.includes('piece')) {
+              unitValue = 'Pcs';
+            } else if (unitLower.includes('kg') || unitLower.includes('kilogram')) {
+              unitValue = 'Kg';
+            } else if (unitLower.includes('hour')) {
+              unitValue = 'Hours';
+            } else if (unitLower.includes('day')) {
+              unitValue = 'Days';
+            } else {
+              // Default to 'Pcs' if no match
+              unitValue = 'Pcs';
+            }
+          }
+          
+          // Truncate item_name if too long (max 255 chars)
+          const itemName = String(item.item_name || '').substring(0, 255);
+          
+          await connection.execute(
+            `INSERT INTO estimate_items 
+             (estimate_id, item_name, description, quantity, unit, unit_price, tax, tax_rate, amount)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              proposalId,
+              itemName,
+              item.description || '',
+              parseFloat(item.quantity) || 1,
+              unitValue, // Now guaranteed to be valid ENUM value
+              parseFloat(item.unit_price) || 0,
+              item.tax || '',
+              parseFloat(item.tax_rate) || 0,
+              parseFloat(item.amount) || 0
+            ]
+          );
+        } catch (itemError) {
+          console.error('Error inserting item:', item, itemError);
+          throw itemError;
+        }
       }
+    } else {
+      console.log('No items to insert');
     }
 
     await connection.commit();
@@ -440,10 +513,21 @@ const create = async (req, res) => {
     res.status(201).json({ success: true, data: proposal });
   } catch (error) {
     await connection.rollback();
-    console.error('Create proposal error:', error);
+    console.error('=== CREATE PROPOSAL ERROR ===');
+    console.error('Error Message:', error.message);
+    console.error('Error Stack:', error.stack);
+    console.error('Error Code:', error.code);
+    console.error('Error SQL State:', error.sqlState);
+    console.error('Error SQL Message:', error.sqlMessage);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to create proposal'
+      error: error.message || 'Failed to create proposal',
+      details: process.env.NODE_ENV === 'development' ? {
+        code: error.code,
+        sqlState: error.sqlState,
+        sqlMessage: error.sqlMessage,
+        stack: error.stack
+      } : undefined
     });
   } finally {
     connection.release();
