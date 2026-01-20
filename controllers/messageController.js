@@ -82,8 +82,22 @@ const getAll = async (req, res) => {
            END as other_user_role,
            m.message as last_message,
            m.created_at as last_message_time,
-           (SELECT COUNT(*) FROM messages WHERE to_user_id = ? AND from_user_id = other_user_id AND is_read = 0 AND is_deleted = 0) as unread_count,
-           ROW_NUMBER() OVER (PARTITION BY other_user_id ORDER BY m.created_at DESC) as rn
+           (SELECT COUNT(*) 
+            FROM messages msg 
+            WHERE msg.to_user_id = ? 
+              AND msg.from_user_id = CASE 
+                WHEN m.from_user_id = ? THEN m.to_user_id
+                ELSE m.from_user_id
+              END 
+              AND msg.is_read = 0 
+              AND msg.is_deleted = 0) as unread_count,
+           ROW_NUMBER() OVER (
+             PARTITION BY CASE 
+               WHEN m.from_user_id = ? THEN m.to_user_id
+               ELSE m.from_user_id
+             END 
+             ORDER BY m.created_at DESC
+           ) as rn
          FROM messages m
          LEFT JOIN users u_from ON m.from_user_id = u_from.id
          LEFT JOIN users u_to ON m.to_user_id = u_to.id
@@ -93,7 +107,7 @@ const getAll = async (req, res) => {
        ) as conversations
        WHERE rn = 1
        ORDER BY last_message_time DESC`,
-      [userId, userId, userId, userId, userId, companyId, userId, userId]
+      [userId, userId, userId, userId, userId, userId, userId, companyId, userId, userId]
     );
 
     console.log('Conversations found:', conversations.length);
