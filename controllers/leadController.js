@@ -175,14 +175,28 @@ const getAll = async (req, res) => {
       params
     );
 
-    // Get labels for each lead
+    // Get labels and services for each lead
     const leadsWithLabels = await Promise.all(leads.map(async (lead) => {
       const [labels] = await pool.execute(
         `SELECT label FROM lead_labels WHERE lead_id = ?`,
         [lead.id]
       );
       const leadLabels = labels.map(l => l.label);
-      return sanitizeLead({ ...lead, labels: leadLabels });
+      
+      const [services] = await pool.execute(
+        `SELECT ls.item_id, i.title as item_name, i.rate as item_price
+         FROM lead_services ls
+         LEFT JOIN items i ON ls.item_id = i.id
+         WHERE ls.lead_id = ?`,
+        [lead.id]
+      );
+      const leadServices = services.map(s => ({
+        id: s.item_id.toString(),
+        name: s.item_name || 'Unknown Item',
+        price: s.item_price || 0
+      }));
+      
+      return sanitizeLead({ ...lead, labels: leadLabels, services: leadServices });
     }));
 
     res.json({
@@ -240,6 +254,20 @@ const getById = async (req, res) => {
     );
     lead.labels = labels.map(l => l.label);
 
+    // Get services with item details
+    const [services] = await pool.execute(
+      `SELECT ls.item_id, i.title as item_name, i.rate as item_price
+       FROM lead_services ls
+       LEFT JOIN items i ON ls.item_id = i.id
+       WHERE ls.lead_id = ?`,
+      [lead.id]
+    );
+    lead.services = services.map(s => ({
+      id: s.item_id.toString(),
+      name: s.item_name || 'Unknown Item',
+      price: s.item_price || 0
+    }));
+
     res.json({
       success: true,
       data: sanitizeLead(lead)
@@ -263,7 +291,7 @@ const create = async (req, res) => {
       lead_type, company_name, person_name, email, phone,
       owner_id, status, source, address,
       city, state, zip, country, value, due_followup,
-      notes, probability, call_this_week, labels = []
+      notes, probability, call_this_week, labels = [], services = []
     } = req.body;
 
     // Removed required validations - allow empty data
@@ -320,6 +348,15 @@ const create = async (req, res) => {
       );
     }
 
+    // Insert services
+    if (services && services.length > 0) {
+      const serviceValues = services.map(serviceId => [leadId, parseInt(serviceId), companyId]);
+      await pool.query(
+        `INSERT INTO lead_services (lead_id, item_id, company_id) VALUES ?`,
+        [serviceValues]
+      );
+    }
+
     // Get created lead with company name and owner details
     const [leads] = await pool.execute(
       `SELECT l.*, u.name as owner_name, u.email as owner_email, c.name as company_name
@@ -330,9 +367,32 @@ const create = async (req, res) => {
       [leadId]
     );
 
+    const createdLead = leads[0];
+    
+    // Get labels
+    const [labelRows] = await pool.execute(
+      `SELECT label FROM lead_labels WHERE lead_id = ?`,
+      [leadId]
+    );
+    createdLead.labels = labelRows.map(l => l.label);
+    
+    // Get services with item details
+    const [serviceRows] = await pool.execute(
+      `SELECT ls.item_id, i.title as item_name, i.rate as item_price
+       FROM lead_services ls
+       LEFT JOIN items i ON ls.item_id = i.id
+       WHERE ls.lead_id = ?`,
+      [leadId]
+    );
+    createdLead.services = serviceRows.map(s => ({
+      id: s.item_id.toString(),
+      name: s.item_name || 'Unknown Item',
+      price: s.item_price || 0
+    }));
+
     res.status(201).json({
       success: true,
-      data: sanitizeLead(leads[0]),
+      data: sanitizeLead(createdLead),
       message: 'Lead created successfully'
     });
   } catch (error) {
@@ -428,6 +488,18 @@ const update = async (req, res) => {
       }
     }
 
+    // Update services if provided
+    if (updateFields.services !== undefined) {
+      await pool.execute(`DELETE FROM lead_services WHERE lead_id = ?`, [id]);
+      if (updateFields.services && updateFields.services.length > 0) {
+        const serviceValues = updateFields.services.map(serviceId => [id, parseInt(serviceId), companyId]);
+        await pool.query(
+          `INSERT INTO lead_services (lead_id, item_id, company_id) VALUES ?`,
+          [serviceValues]
+        );
+      }
+    }
+
     // Get updated lead with company name
     const [updatedLeads] = await pool.execute(
       `SELECT l.*, u.name as owner_name, u.email as owner_email, c.name as company_name
@@ -447,6 +519,20 @@ const update = async (req, res) => {
         [id]
       );
       updatedLead.labels = labels.map(l => l.label);
+      
+      // Get services
+      const [services] = await pool.execute(
+        `SELECT ls.item_id, i.title as item_name, i.rate as item_price
+         FROM lead_services ls
+         LEFT JOIN items i ON ls.item_id = i.id
+         WHERE ls.lead_id = ?`,
+        [id]
+      );
+      updatedLead.services = services.map(s => ({
+        id: s.item_id.toString(),
+        name: s.item_name || 'Unknown Item',
+        price: s.item_price || 0
+      }));
     }
 
     res.json({

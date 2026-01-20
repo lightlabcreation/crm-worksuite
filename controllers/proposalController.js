@@ -678,12 +678,35 @@ const sendEmail = async (req, res) => {
 
     const proposal = proposals[0];
 
-    // Generate public URL (you'll need to implement this)
+    // Generate public URL
     const publicUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/public/proposals/${id}`;
 
-    // Generate email HTML
-    const { sendEmail: sendEmailUtil, generateProposalEmailHTML } = require('../utils/emailService');
-    const emailHTML = generateProposalEmailHTML(proposal, publicUrl);
+    // Use email template renderer
+    const { renderEmailTemplate } = require('../utils/emailTemplateRenderer');
+    const { sendEmail: sendEmailUtil } = require('../utils/emailService');
+
+    // Build data object for template
+    const templateData = {
+      PROPOSAL_NUMBER: proposal.estimate_number || proposal.title || `PROP-${proposal.id}`,
+      CONTACT_FIRST_NAME: proposal.client_name || 'Valued Customer',
+      PUBLIC_PROPOSAL_URL: publicUrl,
+      PROPOSAL_AMOUNT: `$${parseFloat(proposal.total || 0).toFixed(2)}`,
+      COMPANY_NAME: proposal.company_name || 'Our Company',
+      SIGNATURE: process.env.EMAIL_SIGNATURE || 'Best regards,<br>Your Team'
+    };
+
+    // Render template (or use provided message)
+    let emailSubject, emailHTML;
+    if (message) {
+      // Use custom message if provided
+      emailSubject = subject || `Proposal ${proposal.estimate_number || proposal.title}`;
+      emailHTML = message;
+    } else {
+      // Use template
+      const rendered = await renderEmailTemplate('proposal_sent', templateData, proposal.company_id);
+      emailSubject = subject || rendered.subject;
+      emailHTML = rendered.body;
+    }
 
     // Send email
     const recipientEmail = to || proposal.client_email;
@@ -693,7 +716,7 @@ const sendEmail = async (req, res) => {
 
     await sendEmailUtil({
       to: recipientEmail,
-      subject: subject || `Proposal ${proposal.estimate_number}`,
+      subject: emailSubject,
       html: emailHTML,
       text: `Please view the proposal at: ${publicUrl}`
     });

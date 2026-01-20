@@ -31,6 +31,343 @@ const ensureTablesExist = async () => {
       }
       console.log('Attendance settings tables created successfully');
     }
+
+    // Check if shifts table exists and add missing columns
+    try {
+      const [shiftsTable] = await pool.query(
+        "SHOW TABLES LIKE 'shifts'"
+      );
+
+      if (shiftsTable.length > 0) {
+        // Get existing columns
+        const [existingColumns] = await pool.query(
+          `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+           WHERE TABLE_SCHEMA = DATABASE() 
+           AND TABLE_NAME = 'shifts'`
+        );
+        const columnNames = existingColumns.map(col => col.COLUMN_NAME);
+
+        // Check and add shift_short_code column
+        if (!columnNames.includes('shift_short_code')) {
+          console.log('Adding shift_short_code column to shifts table...');
+          // Try to add after 'name' column first, if that fails, add at the end
+          try {
+            await pool.query(
+              `ALTER TABLE shifts ADD COLUMN shift_short_code VARCHAR(20) NULL AFTER name`
+            );
+          } catch (e) {
+            // If 'name' column doesn't exist or positioning fails, add at end
+            await pool.query(
+              `ALTER TABLE shifts ADD COLUMN shift_short_code VARCHAR(20) NULL`
+            );
+          }
+          console.log('shift_short_code column added successfully');
+        }
+
+        // Check and add shift_type column
+        if (!columnNames.includes('shift_type')) {
+          console.log('Adding shift_type column to shifts table...');
+          try {
+            // Get updated column list (shift_short_code might have been just added)
+            const [updatedColumns] = await pool.query(
+              `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+               WHERE TABLE_SCHEMA = DATABASE() 
+               AND TABLE_NAME = 'shifts'`
+            );
+            const updatedColumnNames = updatedColumns.map(col => col.COLUMN_NAME);
+
+            // Try to add after shift_short_code if it exists, otherwise after name or at end
+            if (updatedColumnNames.includes('shift_short_code')) {
+              await pool.query(
+                `ALTER TABLE shifts ADD COLUMN shift_type ENUM('Strict', 'Flexible') DEFAULT 'Strict' AFTER shift_short_code`
+              );
+            } else if (updatedColumnNames.includes('name')) {
+              await pool.query(
+                `ALTER TABLE shifts ADD COLUMN shift_type ENUM('Strict', 'Flexible') DEFAULT 'Strict' AFTER name`
+              );
+            } else {
+              await pool.query(
+                `ALTER TABLE shifts ADD COLUMN shift_type ENUM('Strict', 'Flexible') DEFAULT 'Strict'`
+              );
+            }
+            console.log('shift_type column added successfully');
+          } catch (colError) {
+            console.warn('Error adding shift_type column:', colError.message);
+          }
+        }
+
+        // Check and add half_day_time column
+        if (!columnNames.includes('half_day_time')) {
+          console.log('Adding half_day_time column to shifts table...');
+          try {
+            await pool.query(
+              `ALTER TABLE shifts ADD COLUMN half_day_time TIME NULL`
+            );
+            console.log('half_day_time column added successfully');
+          } catch (e) {
+            console.warn('Error adding half_day_time column:', e.message);
+          }
+        }
+
+        // Check and add auto_clock_out_time column
+        if (!columnNames.includes('auto_clock_out_time')) {
+          console.log('Adding auto_clock_out_time column to shifts table...');
+          try {
+            await pool.query(
+              `ALTER TABLE shifts ADD COLUMN auto_clock_out_time TIME NULL`
+            );
+            console.log('auto_clock_out_time column added successfully');
+          } catch (e) {
+            console.warn('Error adding auto_clock_out_time column:', e.message);
+          }
+        }
+
+        // Check and add max_check_ins_per_day column
+        if (!columnNames.includes('max_check_ins_per_day')) {
+          console.log('Adding max_check_ins_per_day column to shifts table...');
+          try {
+            await pool.query(
+              `ALTER TABLE shifts ADD COLUMN max_check_ins_per_day INT DEFAULT 1`
+            );
+            console.log('max_check_ins_per_day column added successfully');
+          } catch (e) {
+            console.warn('Error adding max_check_ins_per_day column:', e.message);
+          }
+        }
+
+        // Check and add working_days column
+        if (!columnNames.includes('working_days')) {
+          console.log('Adding working_days column to shifts table...');
+          try {
+            await pool.query(
+              `ALTER TABLE shifts ADD COLUMN working_days JSON DEFAULT ('["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]')`
+            );
+            console.log('working_days column added successfully');
+          } catch (e) {
+            // If JSON type not supported, use TEXT
+            try {
+              await pool.query(
+                `ALTER TABLE shifts ADD COLUMN working_days TEXT DEFAULT '["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]'`
+              );
+              console.log('working_days column added successfully (as TEXT)');
+            } catch (e2) {
+              console.warn('Error adding working_days column:', e2.message);
+            }
+          }
+        }
+
+        // Check and add is_default column
+        if (!columnNames.includes('is_default')) {
+          console.log('Adding is_default column to shifts table...');
+          try {
+            await pool.query(
+              `ALTER TABLE shifts ADD COLUMN is_default TINYINT(1) DEFAULT 0`
+            );
+            console.log('is_default column added successfully');
+          } catch (e) {
+            console.warn('Error adding is_default column:', e.message);
+          }
+        }
+
+        // Check and add is_active column
+        if (!columnNames.includes('is_active')) {
+          console.log('Adding is_active column to shifts table...');
+          try {
+            await pool.query(
+              `ALTER TABLE shifts ADD COLUMN is_active TINYINT(1) DEFAULT 1`
+            );
+            console.log('is_active column added successfully');
+          } catch (e) {
+            console.warn('Error adding is_active column:', e.message);
+          }
+        }
+      }
+    } catch (tableError) {
+      console.warn('Error checking/updating shifts table:', tableError.message);
+      // Don't throw - continue execution
+    }
+
+    // Check if shift_rotations table exists and add missing columns
+    try {
+      const [rotationsTable] = await pool.query(
+        "SHOW TABLES LIKE 'shift_rotations'"
+      );
+
+      if (rotationsTable.length > 0) {
+        // Get existing columns
+        const [existingColumns] = await pool.query(
+          `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+           WHERE TABLE_SCHEMA = DATABASE() 
+           AND TABLE_NAME = 'shift_rotations'`
+        );
+        const columnNames = existingColumns.map(col => col.COLUMN_NAME);
+
+        // Check and add shift_sequence column (the actual DB column name)
+        if (!columnNames.includes('shift_sequence')) {
+          // If old column name exists, rename it
+          if (columnNames.includes('shifts_in_sequence')) {
+            console.log('Renaming shifts_in_sequence to shift_sequence in shift_rotations table...');
+            try {
+              await pool.query(
+                `ALTER TABLE shift_rotations CHANGE COLUMN shifts_in_sequence shift_sequence JSON NOT NULL`
+              );
+              console.log('Column renamed successfully');
+            } catch (e) {
+              // If JSON type not supported, use TEXT
+              try {
+                await pool.query(
+                  `ALTER TABLE shift_rotations CHANGE COLUMN shifts_in_sequence shift_sequence TEXT NOT NULL DEFAULT '[]'`
+                );
+                console.log('Column renamed successfully (as TEXT)');
+              } catch (e2) {
+                console.warn('Error renaming column:', e2.message);
+              }
+            }
+          } else {
+            // Add new column
+            console.log('Adding shift_sequence column to shift_rotations table...');
+            try {
+              await pool.query(
+                `ALTER TABLE shift_rotations ADD COLUMN shift_sequence JSON NOT NULL`
+              );
+              console.log('shift_sequence column added successfully');
+            } catch (e) {
+              // If JSON type not supported, use TEXT
+              try {
+                await pool.query(
+                  `ALTER TABLE shift_rotations ADD COLUMN shift_sequence TEXT NOT NULL DEFAULT '[]'`
+                );
+                console.log('shift_sequence column added successfully (as TEXT)');
+              } catch (e2) {
+                console.warn('Error adding shift_sequence column:', e2.message);
+              }
+            }
+          }
+        }
+
+        // Check and add replace_existing_shift column
+        if (!columnNames.includes('replace_existing_shift')) {
+          console.log('Adding replace_existing_shift column to shift_rotations table...');
+          try {
+            await pool.query(
+              `ALTER TABLE shift_rotations ADD COLUMN replace_existing_shift TINYINT(1) DEFAULT 1`
+            );
+            console.log('replace_existing_shift column added successfully');
+          } catch (e) {
+            console.warn('Error adding replace_existing_shift column:', e.message);
+          }
+        }
+
+        // Check and add notify_employees column
+        if (!columnNames.includes('notify_employees')) {
+          console.log('Adding notify_employees column to shift_rotations table...');
+          try {
+            await pool.query(
+              `ALTER TABLE shift_rotations ADD COLUMN notify_employees TINYINT(1) DEFAULT 1`
+            );
+            console.log('notify_employees column added successfully');
+          } catch (e) {
+            console.warn('Error adding notify_employees column:', e.message);
+          }
+        }
+
+        // Check and add is_active column
+        if (!columnNames.includes('is_active')) {
+          console.log('Adding is_active column to shift_rotations table...');
+          try {
+            await pool.query(
+              `ALTER TABLE shift_rotations ADD COLUMN is_active TINYINT(1) DEFAULT 1`
+            );
+            console.log('is_active column added successfully');
+          } catch (e) {
+            console.warn('Error adding is_active column:', e.message);
+          }
+        }
+      }
+    } catch (tableError) {
+      console.warn('Error checking/updating shift_rotations table:', tableError.message);
+      // Don't throw - continue execution
+    }
+
+    // Check if employee_shift_assignments table exists and add missing columns
+    try {
+      const [assignmentsTable] = await pool.query(
+        "SHOW TABLES LIKE 'employee_shift_assignments'"
+      );
+
+      if (assignmentsTable.length > 0) {
+        // Get existing columns
+        const [existingColumns] = await pool.query(
+          `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+           WHERE TABLE_SCHEMA = DATABASE() 
+           AND TABLE_NAME = 'employee_shift_assignments'`
+        );
+        const columnNames = existingColumns.map(col => col.COLUMN_NAME);
+
+        // Check and add assigned_from column
+        if (!columnNames.includes('assigned_from')) {
+          console.log('Adding assigned_from column to employee_shift_assignments table...');
+          try {
+            // If assigned_date exists, rename it; otherwise add new
+            if (columnNames.includes('assigned_date')) {
+              await pool.query(
+                `ALTER TABLE employee_shift_assignments CHANGE COLUMN assigned_date assigned_from DATE NOT NULL`
+              );
+              console.log('assigned_date renamed to assigned_from successfully');
+            } else {
+              await pool.query(
+                `ALTER TABLE employee_shift_assignments ADD COLUMN assigned_from DATE NOT NULL`
+              );
+              console.log('assigned_from column added successfully');
+            }
+          } catch (e) {
+            console.warn('Error adding/renaming assigned_from column:', e.message);
+          }
+        }
+
+        // Check and add assigned_to column
+        if (!columnNames.includes('assigned_to')) {
+          console.log('Adding assigned_to column to employee_shift_assignments table...');
+          try {
+            await pool.query(
+              `ALTER TABLE employee_shift_assignments ADD COLUMN assigned_to DATE NULL`
+            );
+            console.log('assigned_to column added successfully');
+          } catch (e) {
+            console.warn('Error adding assigned_to column:', e.message);
+          }
+        }
+
+        // Check and add rotation_id column
+        if (!columnNames.includes('rotation_id')) {
+          console.log('Adding rotation_id column to employee_shift_assignments table...');
+          try {
+            await pool.query(
+              `ALTER TABLE employee_shift_assignments ADD COLUMN rotation_id INT NULL`
+            );
+            console.log('rotation_id column added successfully');
+          } catch (e) {
+            console.warn('Error adding rotation_id column:', e.message);
+          }
+        }
+
+        // Check and add is_active column
+        if (!columnNames.includes('is_active')) {
+          console.log('Adding is_active column to employee_shift_assignments table...');
+          try {
+            await pool.query(
+              `ALTER TABLE employee_shift_assignments ADD COLUMN is_active TINYINT(1) DEFAULT 1`
+            );
+            console.log('is_active column added successfully');
+          } catch (e) {
+            console.warn('Error adding is_active column:', e.message);
+          }
+        }
+      }
+    } catch (tableError) {
+      console.warn('Error checking/updating employee_shift_assignments table:', tableError.message);
+      // Don't throw - continue execution
+    }
   } catch (error) {
     console.error('Error ensuring tables exist:', error);
     throw error;
@@ -200,14 +537,31 @@ exports.getAllShifts = async (req, res) => {
     }
 
     const [shifts] = await pool.query(
-      `SELECT * FROM shifts WHERE company_id = ? ORDER BY is_default DESC, shift_name ASC`,
+      `SELECT * FROM shifts WHERE company_id = ? AND (is_deleted = 0 OR is_deleted IS NULL) ORDER BY name ASC`,
       [company_id]
     );
 
-    // Parse JSON fields
+    // Map database columns to expected field names (actual DB uses: name, color, late_mark_after, early_clock_in)
     const parsedShifts = shifts.map(shift => ({
-      ...shift,
-      working_days: JSON.parse(shift.working_days || '[]')
+      id: shift.id,
+      company_id: shift.company_id,
+      shift_name: shift.name || shift.shift_name, // Map 'name' to 'shift_name' for frontend
+      shift_short_code: shift.shift_short_code || '',
+      shift_type: shift.shift_type || 'Strict',
+      shift_color: shift.color || shift.shift_color || '#3B82F6', // Map 'color' to 'shift_color' for frontend
+      start_time: shift.start_time,
+      end_time: shift.end_time,
+      half_day_mark_time: shift.half_day_time || null,
+      half_day_time: shift.half_day_time || null,
+      auto_clock_out_time: shift.auto_clock_out_time || null,
+      early_clock_in_allowed_minutes: shift.early_clock_in || shift.early_clock_in_allowed_minutes || 0, // Map 'early_clock_in' to 'early_clock_in_allowed_minutes'
+      late_mark_after_minutes: shift.late_mark_after || shift.late_mark_after_minutes || 15, // Map 'late_mark_after' to 'late_mark_after_minutes'
+      max_check_ins_per_day: shift.max_check_ins_per_day || 1,
+      working_days: shift.working_days ? (typeof shift.working_days === 'string' ? JSON.parse(shift.working_days) : shift.working_days) : ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
+      is_default: shift.is_default || 0,
+      is_active: shift.is_active !== undefined ? shift.is_active : 1,
+      created_at: shift.created_at,
+      updated_at: shift.updated_at
     }));
 
     res.json({
@@ -243,7 +597,7 @@ exports.getShiftById = async (req, res) => {
     }
 
     const [shifts] = await pool.query(
-      `SELECT * FROM shifts WHERE id = ? AND company_id = ?`,
+      `SELECT * FROM shifts WHERE id = ? AND company_id = ? AND (is_deleted = 0 OR is_deleted IS NULL)`,
       [id, company_id]
     );
 
@@ -254,11 +608,29 @@ exports.getShiftById = async (req, res) => {
       });
     }
 
+    const shift = shifts[0];
     res.json({
       success: true,
       data: {
-        ...shifts[0],
-        working_days: JSON.parse(shifts[0].working_days || '[]')
+        id: shift.id,
+        company_id: shift.company_id,
+        shift_name: shift.name || shift.shift_name,
+        shift_short_code: shift.shift_short_code || '',
+        shift_type: shift.shift_type || 'Strict',
+        shift_color: shift.color || shift.shift_color || '#3B82F6',
+        start_time: shift.start_time,
+        end_time: shift.end_time,
+        half_day_mark_time: shift.half_day_time || null,
+        half_day_time: shift.half_day_time || null,
+        auto_clock_out_time: shift.auto_clock_out_time || null,
+        early_clock_in_allowed_minutes: shift.early_clock_in || shift.early_clock_in_allowed_minutes || 0,
+        late_mark_after_minutes: shift.late_mark_after || shift.late_mark_after_minutes || 15,
+        max_check_ins_per_day: shift.max_check_ins_per_day || 1,
+        working_days: shift.working_days ? (typeof shift.working_days === 'string' ? JSON.parse(shift.working_days) : shift.working_days) : ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
+        is_default: shift.is_default || 0,
+        is_active: shift.is_active !== undefined ? shift.is_active : 1,
+        created_at: shift.created_at,
+        updated_at: shift.updated_at
       }
     });
   } catch (error) {
@@ -297,26 +669,52 @@ exports.createShift = async (req, res) => {
       });
     }
 
-    // If this shift is marked as default, unset other defaults
-    if (shiftData.is_default) {
-      await pool.query(
-        `UPDATE shifts SET is_default = 0 WHERE company_id = ?`,
-        [company_id]
-      );
+    // Check if shift_type column exists
+    const [shiftTypeColumn] = await pool.query(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+       WHERE TABLE_SCHEMA = DATABASE() 
+       AND TABLE_NAME = 'shifts' 
+       AND COLUMN_NAME = 'shift_type'`
+    );
+
+    // Check if shift_short_code column exists
+    const [shiftShortCodeColumn] = await pool.query(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+       WHERE TABLE_SCHEMA = DATABASE() 
+       AND TABLE_NAME = 'shifts' 
+       AND COLUMN_NAME = 'shift_short_code'`
+    );
+
+    // Map frontend field names to database column names (actual DB uses: name, color, late_mark_after, early_clock_in)
+    const dbData = {
+      company_id: company_id,
+      name: shiftData.shift_name, // Database uses 'name' not 'shift_name'
+      color: shiftData.shift_color || '#3B82F6', // Database uses 'color' not 'shift_color'
+      start_time: shiftData.start_time,
+      end_time: shiftData.end_time,
+      half_day_time: shiftData.half_day_time || shiftData.half_day_mark_time || null,
+      auto_clock_out_time: shiftData.auto_clock_out_time || null,
+      early_clock_in: shiftData.early_clock_in_allowed_minutes || 0, // Database uses 'early_clock_in' not 'early_clock_in_allowed_minutes'
+      late_mark_after: shiftData.late_mark_after_minutes || 15, // Database uses 'late_mark_after' not 'late_mark_after_minutes'
+      max_check_ins_per_day: shiftData.max_check_ins_per_day || 1,
+      working_days: shiftData.working_days ? JSON.stringify(Array.isArray(shiftData.working_days) ? shiftData.working_days : [shiftData.working_days]) : JSON.stringify(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']),
+      is_default: shiftData.is_default ? 1 : 0,
+      is_active: shiftData.is_active !== undefined ? (shiftData.is_active ? 1 : 0) : 1
+    };
+
+    // Only include shift_short_code if column exists
+    if (shiftShortCodeColumn.length > 0) {
+      dbData.shift_short_code = shiftData.shift_short_code || null;
     }
 
-    // Convert working_days array to JSON string
-    if (shiftData.working_days && Array.isArray(shiftData.working_days)) {
-      shiftData.working_days = JSON.stringify(shiftData.working_days);
-    } else {
-      shiftData.working_days = JSON.stringify([]);
+    // Only include shift_type if column exists
+    if (shiftTypeColumn.length > 0) {
+      dbData.shift_type = shiftData.shift_type || 'Strict';
     }
-
-    shiftData.company_id = company_id;
 
     const [result] = await pool.query(
       `INSERT INTO shifts SET ?`,
-      [shiftData]
+      [dbData]
     );
 
     // Fetch the created shift
@@ -375,22 +773,45 @@ exports.updateShift = async (req, res) => {
       });
     }
 
-    // If this shift is marked as default, unset other defaults
-    if (updates.is_default) {
-      await pool.query(
-        `UPDATE shifts SET is_default = 0 WHERE company_id = ? AND id != ?`,
-        [company_id, id]
-      );
-    }
+    // Check which columns exist in the table
+    const [columns] = await pool.query(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+       WHERE TABLE_SCHEMA = DATABASE() 
+       AND TABLE_NAME = 'shifts'`
+    );
+    const columnNames = columns.map(col => col.COLUMN_NAME);
 
-    // Convert working_days array to JSON string
-    if (updates.working_days && Array.isArray(updates.working_days)) {
-      updates.working_days = JSON.stringify(updates.working_days);
+    // Map frontend field names to database column names (actual DB uses: name, color, late_mark_after, early_clock_in)
+    const dbUpdates = {};
+    if (updates.shift_name !== undefined) dbUpdates.name = updates.shift_name; // Map to 'name'
+    if (updates.shift_short_code !== undefined && columnNames.includes('shift_short_code')) {
+      dbUpdates.shift_short_code = updates.shift_short_code;
+    }
+    if (updates.shift_type !== undefined && columnNames.includes('shift_type')) {
+      dbUpdates.shift_type = updates.shift_type;
+    }
+    if (updates.shift_color !== undefined) dbUpdates.color = updates.shift_color; // Map to 'color'
+    if (updates.start_time !== undefined) dbUpdates.start_time = updates.start_time;
+    if (updates.end_time !== undefined) dbUpdates.end_time = updates.end_time;
+    if (updates.half_day_time !== undefined || updates.half_day_mark_time !== undefined) dbUpdates.half_day_time = updates.half_day_time || updates.half_day_mark_time;
+    if (updates.auto_clock_out_time !== undefined) dbUpdates.auto_clock_out_time = updates.auto_clock_out_time;
+    if (updates.late_mark_after_minutes !== undefined) dbUpdates.late_mark_after = updates.late_mark_after_minutes; // Map to 'late_mark_after'
+    if (updates.early_clock_in_allowed_minutes !== undefined) dbUpdates.early_clock_in = updates.early_clock_in_allowed_minutes; // Map to 'early_clock_in'
+    if (updates.max_check_ins_per_day !== undefined) dbUpdates.max_check_ins_per_day = updates.max_check_ins_per_day;
+    if (updates.working_days !== undefined) dbUpdates.working_days = JSON.stringify(Array.isArray(updates.working_days) ? updates.working_days : [updates.working_days]);
+    if (updates.is_default !== undefined) dbUpdates.is_default = updates.is_default ? 1 : 0;
+    if (updates.is_active !== undefined) dbUpdates.is_active = updates.is_active ? 1 : 0;
+
+    if (Object.keys(dbUpdates).length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'No valid fields to update'
+      });
     }
 
     await pool.query(
       `UPDATE shifts SET ? WHERE id = ? AND company_id = ?`,
-      [updates, id, company_id]
+      [dbUpdates, id, company_id]
     );
 
     // Fetch updated shift
@@ -399,12 +820,31 @@ exports.updateShift = async (req, res) => {
       [id]
     );
 
+    const shift = updatedShift[0];
     res.json({
       success: true,
       message: 'Shift updated successfully',
       data: {
-        ...updatedShift[0],
-        working_days: JSON.parse(updatedShift[0].working_days || '[]')
+        id: shift.id,
+        company_id: shift.company_id,
+        shift_name: shift.name || shift.shift_name,
+        shift_short_code: shift.shift_short_code || '',
+        shift_type: shift.shift_type || 'Strict',
+        shift_color: shift.color || shift.shift_color || '#3B82F6',
+        start_time: shift.start_time,
+        end_time: shift.end_time,
+        half_day_mark_time: shift.half_day_time || null,
+        half_day_time: shift.half_day_time || null,
+        auto_clock_out_time: shift.auto_clock_out_time || null,
+        early_clock_in_allowed_minutes: shift.early_clock_in || shift.early_clock_in_allowed_minutes || 0,
+        late_mark_after_minutes: shift.late_mark_after || shift.late_mark_after_minutes || 15,
+        max_check_ins_per_day: shift.max_check_ins_per_day || 1,
+        working_days: shift.working_days ? (typeof shift.working_days === 'string' ? JSON.parse(shift.working_days) : shift.working_days) : ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
+        is_default: shift.is_default || 0,
+        is_active: shift.is_active !== undefined ? shift.is_active : 1,
+        description: shift.description || '',
+        created_at: shift.created_at,
+        updated_at: shift.updated_at
       }
     });
   } catch (error) {
@@ -567,10 +1007,10 @@ exports.getAllRotations = async (req, res) => {
       [company_id]
     );
 
-    // Parse JSON fields
+    // Parse JSON fields - map shift_sequence (DB) to shifts_in_sequence (API)
     const parsedRotations = rotations.map(rotation => ({
       ...rotation,
-      shifts_in_sequence: JSON.parse(rotation.shifts_in_sequence || '[]')
+      shifts_in_sequence: JSON.parse(rotation.shift_sequence || rotation.shifts_in_sequence || '[]')
     }));
 
     res.json({
@@ -613,18 +1053,23 @@ exports.createRotation = async (req, res) => {
       });
     }
 
-    // Convert shifts_in_sequence array to JSON string
-    if (rotationData.shifts_in_sequence && Array.isArray(rotationData.shifts_in_sequence)) {
-      rotationData.shifts_in_sequence = JSON.stringify(rotationData.shifts_in_sequence);
-    } else {
-      rotationData.shifts_in_sequence = JSON.stringify([]);
-    }
-
-    rotationData.company_id = company_id;
+    // Map frontend field names to database column names
+    // Frontend uses 'shifts_in_sequence', DB uses 'shift_sequence'
+    const dbData = {
+      company_id: company_id,
+      rotation_name: rotationData.rotation_name,
+      rotation_frequency: rotationData.rotation_frequency,
+      shift_sequence: rotationData.shifts_in_sequence && Array.isArray(rotationData.shifts_in_sequence) 
+        ? JSON.stringify(rotationData.shifts_in_sequence) 
+        : JSON.stringify([]),
+      replace_existing_shift: rotationData.replace_existing_shift !== undefined ? (rotationData.replace_existing_shift ? 1 : 0) : 1,
+      notify_employees: rotationData.notify_employees !== undefined ? (rotationData.notify_employees ? 1 : 0) : 1,
+      is_active: rotationData.is_active !== undefined ? (rotationData.is_active ? 1 : 0) : 1
+    };
 
     const [result] = await pool.query(
       `INSERT INTO shift_rotations SET ?`,
-      [rotationData]
+      [dbData]
     );
 
     // Fetch the created rotation
@@ -638,7 +1083,7 @@ exports.createRotation = async (req, res) => {
       message: 'Shift rotation created successfully',
       data: {
         ...newRotation[0],
-        shifts_in_sequence: JSON.parse(newRotation[0].shifts_in_sequence || '[]')
+        shifts_in_sequence: JSON.parse(newRotation[0].shift_sequence || newRotation[0].shifts_in_sequence || '[]')
       }
     });
   } catch (error) {
@@ -740,7 +1185,8 @@ exports.runRotation = async (req, res) => {
     }
 
     const rotation = rotations[0];
-    const shiftsInSequence = JSON.parse(rotation.shifts_in_sequence || '[]');
+    // Map shift_sequence (DB) to shifts_in_sequence (API)
+    const shiftsInSequence = JSON.parse(rotation.shift_sequence || rotation.shifts_in_sequence || '[]');
 
     if (shiftsInSequence.length === 0) {
       return res.status(400).json({
@@ -756,35 +1202,42 @@ exports.runRotation = async (req, res) => {
     for (let i = 0; i < employee_ids.length; i++) {
       const shiftId = shiftsInSequence[i % shiftsInSequence.length];
       
-      // Check if assignment already exists
+      // Check if assignment already exists - use assigned_from (correct column name)
+      // Check for assignments that overlap with the assignment date
       const [existing] = await pool.query(
         `SELECT id FROM employee_shift_assignments 
-         WHERE employee_id = ? AND assigned_date = ?`,
-        [employee_ids[i], assignmentDate]
+         WHERE employee_id = ? 
+         AND assigned_from <= ? 
+         AND (assigned_to IS NULL OR assigned_to >= ?)
+         AND is_active = 1`,
+        [employee_ids[i], assignmentDate, assignmentDate]
       );
 
       if (existing.length > 0 && rotation.replace_existing_shift) {
         // Update existing assignment
         await pool.query(
           `UPDATE employee_shift_assignments 
-           SET shift_id = ? 
-           WHERE employee_id = ? AND assigned_date = ?`,
-          [shiftId, employee_ids[i], assignmentDate]
+           SET shift_id = ?, rotation_id = ? 
+           WHERE employee_id = ? 
+           AND assigned_from <= ? 
+           AND (assigned_to IS NULL OR assigned_to >= ?)
+           AND is_active = 1`,
+          [shiftId, rotation_id, employee_ids[i], assignmentDate, assignmentDate]
         );
       } else if (existing.length === 0) {
         // Create new assignment
         await pool.query(
           `INSERT INTO employee_shift_assignments 
-           (company_id, employee_id, shift_id, assigned_date) 
-           VALUES (?, ?, ?, ?)`,
-          [company_id, employee_ids[i], shiftId, assignmentDate]
+           (company_id, employee_id, shift_id, rotation_id, assigned_from) 
+           VALUES (?, ?, ?, ?, ?)`,
+          [company_id, employee_ids[i], shiftId, rotation_id, assignmentDate]
         );
       }
 
       assignments.push({
         employee_id: employee_ids[i],
         shift_id: shiftId,
-        assigned_date: assignmentDate
+        assigned_from: assignmentDate
       });
     }
 

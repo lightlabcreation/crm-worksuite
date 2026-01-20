@@ -18,29 +18,75 @@ const ensureTableExists = async () => {
         subject VARCHAR(500) NOT NULL,
         body LONGTEXT NOT NULL,
         type VARCHAR(100) DEFAULT NULL,
+        template_key VARCHAR(100) DEFAULT NULL COMMENT 'Template key (e.g., contract_sent, invoice_sent)',
+        category VARCHAR(100) DEFAULT NULL COMMENT 'Template category (e.g., Contract, Invoice, Proposal)',
+        is_active TINYINT(1) DEFAULT 1 COMMENT 'Whether template is active',
         is_deleted TINYINT(1) DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX idx_company_id (company_id),
         INDEX idx_type (type),
+        INDEX idx_template_key (template_key),
+        INDEX idx_category (category),
         INDEX idx_is_deleted (is_deleted)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
 
-    // Check if type column exists, add if not
+    // Check and add columns if they don't exist
     const [columns] = await pool.execute(`
       SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
       WHERE TABLE_SCHEMA = DATABASE() 
-      AND TABLE_NAME = 'email_templates' 
-      AND COLUMN_NAME = 'type'
+      AND TABLE_NAME = 'email_templates'
     `);
+    
+    const columnNames = columns.map(col => col.COLUMN_NAME);
 
-    if (columns.length === 0) {
+    if (!columnNames.includes('type')) {
       await pool.execute(`
         ALTER TABLE email_templates 
         ADD COLUMN type VARCHAR(100) DEFAULT NULL 
         AFTER body
       `);
+    }
+
+    if (!columnNames.includes('template_key')) {
+      await pool.execute(`
+        ALTER TABLE email_templates 
+        ADD COLUMN template_key VARCHAR(100) DEFAULT NULL 
+        COMMENT 'Template key (e.g., contract_sent, invoice_sent)' 
+        AFTER type
+      `);
+    }
+
+    if (!columnNames.includes('category')) {
+      await pool.execute(`
+        ALTER TABLE email_templates 
+        ADD COLUMN category VARCHAR(100) DEFAULT NULL 
+        COMMENT 'Template category (e.g., Contract, Invoice, Proposal)' 
+        AFTER template_key
+      `);
+    }
+
+    if (!columnNames.includes('is_active')) {
+      await pool.execute(`
+        ALTER TABLE email_templates 
+        ADD COLUMN is_active TINYINT(1) DEFAULT 1 
+        COMMENT 'Whether template is active' 
+        AFTER category
+      `);
+    }
+
+    // Add indexes if they don't exist
+    try {
+      await pool.execute(`CREATE INDEX idx_template_key ON email_templates (template_key)`);
+    } catch (e) {
+      // Index might already exist
+    }
+
+    try {
+      await pool.execute(`CREATE INDEX idx_category ON email_templates (category)`);
+    } catch (e) {
+      // Index might already exist
     }
 
     return true;
@@ -366,9 +412,60 @@ const deleteTemplate = async (req, res) => {
   }
 };
 
+/**
+ * Get template by template_key
+ * GET /api/v1/email-templates/key/:template_key
+ */
+const getByTemplateKey = async (req, res) => {
+  try {
+    const { template_key } = req.params;
+    const company_id = req.query.company_id || req.body.company_id || 1;
+    
+    const [templates] = await pool.execute(
+      `SELECT * FROM email_templates 
+       WHERE template_key = ? 
+       AND company_id = ? 
+       AND is_deleted = 0 
+       AND is_active = 1
+       ORDER BY updated_at DESC
+       LIMIT 1`,
+      [template_key, company_id]
+    );
+    
+    if (templates.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        error: `Email template with key '${template_key}' not found` 
+      });
+    }
+    
+    const template = templates[0];
+    
+    // Extract merge tags (support both {KEY} and {{KEY}} formats)
+    const mergeTags = [];
+    const tagRegex = /\{(\w+)\}/g;
+    let match;
+    while ((match = tagRegex.exec(template.body)) !== null) {
+      if (!mergeTags.includes(`{${match[1]}}`)) {
+        mergeTags.push(`{${match[1]}}`);
+      }
+    }
+    template.mergeTags = mergeTags;
+    
+    res.json({ success: true, data: template });
+  } catch (error) {
+    console.error('Get email template by key error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message || 'Failed to fetch email template' 
+    });
+  }
+};
+
 module.exports = { 
   getAll, 
   getById, 
+  getByTemplateKey,
   create, 
   update, 
   delete: deleteTemplate

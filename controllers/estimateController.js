@@ -900,11 +900,32 @@ const sendEmail = async (req, res) => {
     // Generate public URL
     const publicUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/public/estimates/${id}`;
 
-    // Generate email HTML
-    const { sendEmail: sendEmailUtil, generateEstimateEmailHTML } = require('../utils/emailService');
+    // Use email template renderer
+    const { renderEmailTemplate } = require('../utils/emailTemplateRenderer');
+    const { sendEmail: sendEmailUtil } = require('../utils/emailService');
 
-    // Use provided message or generate default HTML
-    const emailHTML = message || generateEstimateEmailHTML(estimate, publicUrl);
+    // Build data object for template
+    const templateData = {
+      ESTIMATE_NUMBER: estimate.estimate_number || `EST-${estimate.id}`,
+      CONTACT_FIRST_NAME: estimate.client_name || 'Valued Customer',
+      PUBLIC_ESTIMATE_URL: publicUrl,
+      ESTIMATE_AMOUNT: `$${parseFloat(estimate.total || 0).toFixed(2)}`,
+      COMPANY_NAME: estimate.company_name || 'Our Company',
+      SIGNATURE: process.env.EMAIL_SIGNATURE || 'Best regards,<br>Your Team'
+    };
+
+    // Render template (or use provided message)
+    let emailSubject, emailHTML;
+    if (message) {
+      // Use custom message if provided
+      emailSubject = subject || `Estimate ${estimate.estimate_number}`;
+      emailHTML = message;
+    } else {
+      // Use template
+      const rendered = await renderEmailTemplate('estimate_sent', templateData, estimate.company_id);
+      emailSubject = subject || rendered.subject;
+      emailHTML = rendered.body;
+    }
 
     // Send email
     const recipientEmail = to || estimate.client_email;
@@ -916,7 +937,7 @@ const sendEmail = async (req, res) => {
       to: recipientEmail,
       cc: cc,
       bcc: bcc,
-      subject: subject || `Estimate ${estimate.estimate_number}`,
+      subject: emailSubject,
       html: emailHTML,
       text: `Please view the estimate at: ${publicUrl}`
     });

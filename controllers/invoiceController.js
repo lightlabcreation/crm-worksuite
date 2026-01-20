@@ -1102,9 +1102,32 @@ const sendEmail = async (req, res) => {
     // Generate public URL
     const publicUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/public/invoices/${id}`;
 
-    // Generate email HTML
-    const { sendEmail: sendEmailUtil, generateInvoiceEmailHTML } = require('../utils/emailService');
-    const emailHTML = generateInvoiceEmailHTML(invoice, publicUrl);
+    // Use email template renderer
+    const { renderEmailTemplate } = require('../utils/emailTemplateRenderer');
+    const { sendEmail: sendEmailUtil } = require('../utils/emailService');
+
+    // Build data object for template
+    const templateData = {
+      INVOICE_NUMBER: invoice.invoice_number || `INV-${invoice.id}`,
+      CONTACT_FIRST_NAME: invoice.client_name || 'Valued Customer',
+      PUBLIC_INVOICE_URL: publicUrl,
+      INVOICE_AMOUNT: `$${parseFloat(invoice.total || 0).toFixed(2)}`,
+      COMPANY_NAME: invoice.company_name || 'Our Company',
+      SIGNATURE: process.env.EMAIL_SIGNATURE || 'Best regards,<br>Your Team'
+    };
+
+    // Render template (or use provided message)
+    let emailSubject, emailHTML;
+    if (message) {
+      // Use custom message if provided
+      emailSubject = subject || `Invoice ${invoice.invoice_number}`;
+      emailHTML = message;
+    } else {
+      // Use template
+      const rendered = await renderEmailTemplate('invoice_sent', templateData, invoice.company_id);
+      emailSubject = subject || rendered.subject;
+      emailHTML = rendered.body;
+    }
 
     // Send email
     const recipientEmail = to || invoice.client_email;
@@ -1114,7 +1137,7 @@ const sendEmail = async (req, res) => {
 
     await sendEmailUtil({
       to: recipientEmail,
-      subject: subject || `Invoice ${invoice.invoice_number}`,
+      subject: emailSubject,
       html: emailHTML,
       text: `Please view the invoice at: ${publicUrl}`
     });

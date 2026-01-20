@@ -80,7 +80,6 @@ app.use(
     credentials: true
   })
 );
-
 // Handle preflight requests
 app.options('*', cors());
 
@@ -170,8 +169,10 @@ app.use(`${apiBase}/module-settings`, moduleSettingsRoutes);
 // Notification Settings routes
 const notificationSettingsRoutes = require('./routes/notificationSettingsRoutes');
 const attendanceSettingsRoutes = require('./routes/attendanceSettingsRoutes');
+const leaveSettingsRoutes = require('./routes/leaveSettingsRoutes');
 app.use(`${apiBase}/notification-settings`, notificationSettingsRoutes);
 app.use(`${apiBase}/attendance-settings`, attendanceSettingsRoutes);
+app.use(`${apiBase}/leave-settings`, leaveSettingsRoutes);
 
 // 404 handler
 app.use((req, res) => {
