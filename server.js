@@ -76,7 +76,8 @@ app.use(
       "http://localhost:5173",
       "https://crm-update.netlify.app",   // ✅ Fixed
       "https://crm-worksuit.netlify.app", // ✅ Fixed
-      "https://crm-new-updated.netlify.app" // ✅ Fixed
+      "https://crm-new-updated.netlify.app", // ✅ Fixed
+      "https://worksuit-crm.kiaantechnology.com"
     ],
     credentials: true
   })
