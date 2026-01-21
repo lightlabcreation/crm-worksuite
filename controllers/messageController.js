@@ -13,13 +13,54 @@ const getAll = async (req, res) => {
     const userId = req.query.user_id || req.body.user_id || null;
     const companyId = req.query.company_id || req.body.company_id || 1;
     const conversationWith = req.query.conversation_with; // User ID to get conversation with
+    const groupId = req.query.group_id; // Group ID to get group messages
 
-    console.log('getAll messages - userId:', userId, 'companyId:', companyId, 'conversationWith:', conversationWith);
+    console.log('getAll messages - userId:', userId, 'companyId:', companyId, 'conversationWith:', conversationWith, 'groupId:', groupId);
 
     if (!userId || !companyId) {
       return res.status(400).json({
         success: false,
         error: 'user_id and company_id are required'
+      });
+    }
+
+    if (groupId) {
+      // Get group messages
+      // Verify user is member of the group
+      const [memberships] = await pool.execute(
+        `SELECT * FROM group_members 
+         WHERE group_id = ? AND user_id = ? AND is_deleted = 0`,
+        [groupId, userId]
+      );
+
+      if (memberships.length === 0) {
+        return res.status(403).json({
+          success: false,
+          error: 'You are not a member of this group'
+        });
+      }
+
+      const [messages] = await pool.execute(
+        `SELECT m.*, 
+                from_user.name as from_user_name,
+                from_user.email as from_user_email,
+                from_user.role as from_user_role,
+                g.name as group_name
+         FROM messages m
+         LEFT JOIN users from_user ON m.from_user_id = from_user.id
+         LEFT JOIN groups g ON m.group_id = g.id
+         WHERE m.company_id = ? 
+           AND m.group_id = ?
+           AND m.is_deleted = 0
+         ORDER BY m.created_at ASC`,
+        [companyId, groupId]
+      );
+
+      console.log('Group messages found:', messages.length);
+
+      return res.json({
+        success: true,
+        data: messages
       });
     }
 
@@ -38,6 +79,7 @@ const getAll = async (req, res) => {
          LEFT JOIN users to_user ON m.to_user_id = to_user.id
          WHERE m.company_id = ? 
            AND m.is_deleted = 0
+           AND m.group_id IS NULL
            AND ((m.from_user_id = ? AND m.to_user_id = ?) 
                 OR (m.from_user_id = ? AND m.to_user_id = ?))
          ORDER BY m.created_at ASC`,
@@ -103,6 +145,7 @@ const getAll = async (req, res) => {
          LEFT JOIN users u_to ON m.to_user_id = u_to.id
          WHERE m.company_id = ? 
            AND m.is_deleted = 0
+           AND m.group_id IS NULL
            AND (m.from_user_id = ? OR m.to_user_id = ?)
        ) as conversations
        WHERE rn = 1
@@ -187,11 +230,11 @@ const getById = async (req, res) => {
  */
 const create = async (req, res) => {
   try {
-    const { to_user_id, subject, message, file_path, user_id, company_id } = req.body;
+    const { to_user_id, group_id, subject, message, file_path, user_id, company_id } = req.body;
     const userId = user_id || req.userId || req.query.user_id;
     const companyId = company_id || req.companyId || req.query.company_id;
 
-    console.log('Create message - userId:', userId, 'companyId:', companyId, 'to_user_id:', to_user_id);
+    console.log('Create message - userId:', userId, 'companyId:', companyId, 'to_user_id:', to_user_id, 'group_id:', group_id);
 
     if (!userId || !companyId) {
       return res.status(400).json({
@@ -200,10 +243,87 @@ const create = async (req, res) => {
       });
     }
 
-    if (!to_user_id || !message) {
+    if (!message || !message.trim()) {
       return res.status(400).json({
         success: false,
-        error: 'to_user_id and message are required'
+        error: 'message is required'
+      });
+    }
+
+    // Group message
+    if (group_id) {
+      // Verify user is member of the group
+      const [memberships] = await pool.execute(
+        `SELECT * FROM group_members 
+         WHERE group_id = ? AND user_id = ? AND is_deleted = 0`,
+        [group_id, userId]
+      );
+
+      if (memberships.length === 0) {
+        return res.status(403).json({
+          success: false,
+          error: 'You are not a member of this group'
+        });
+      }
+
+      // Verify group exists and belongs to company
+      const [groups] = await pool.execute(
+        `SELECT * FROM groups 
+         WHERE id = ? AND company_id = ? AND is_deleted = 0`,
+        [group_id, companyId]
+      );
+
+      if (groups.length === 0) {
+        return res.status(404).json({
+          success: false,
+          error: 'Group not found'
+        });
+      }
+
+      // Create group message
+      const [result] = await pool.execute(
+        `INSERT INTO messages (company_id, from_user_id, group_id, subject, message, file_path, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+        [companyId, userId, group_id, subject || 'Group Message', message.trim(), file_path || null]
+      );
+
+      // Get all group members except sender
+      const [members] = await pool.execute(
+        `SELECT user_id FROM group_members 
+         WHERE group_id = ? AND user_id != ? AND is_deleted = 0`,
+        [group_id, userId]
+      );
+
+      // Create message recipients for unread tracking
+      for (const member of members) {
+        try {
+          await pool.execute(
+            `INSERT INTO message_recipients (message_id, user_id, is_read, created_at)
+             VALUES (?, ?, 0, NOW())`,
+            [result.insertId, member.user_id]
+          );
+        } catch (err) {
+          // Ignore duplicate key errors
+          if (err.code !== 'ER_DUP_ENTRY') {
+            console.error('Error creating message recipient:', err);
+          }
+        }
+      }
+
+      console.log('Group message created with ID:', result.insertId);
+
+      return res.status(201).json({
+        success: true,
+        data: { id: result.insertId },
+        message: 'Group message sent successfully'
+      });
+    }
+
+    // Private message
+    if (!to_user_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'to_user_id or group_id is required'
       });
     }
 
@@ -223,7 +343,7 @@ const create = async (req, res) => {
     const [result] = await pool.execute(
       `INSERT INTO messages (company_id, from_user_id, to_user_id, subject, message, file_path, created_at)
        VALUES (?, ?, ?, ?, ?, ?, NOW())`,
-      [companyId, userId, to_user_id, subject || 'Chat Message', message, file_path || null]
+      [companyId, userId, to_user_id, subject || 'Chat Message', message.trim(), file_path || null]
     );
 
     console.log('Message created with ID:', result.insertId);

@@ -857,6 +857,82 @@ pool.getConnection()
         `);
         console.log('✅ Migration completed: client_managers table created');
       }
+
+      // Groups migration
+      try {
+        // Check if groups table exists
+        const [groupsTable] = await pool.execute(
+          `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES 
+           WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'groups'`
+        );
+        if (groupsTable.length === 0) {
+          console.log('📦 Running migration: Creating groups table...');
+          await pool.execute(`
+            CREATE TABLE IF NOT EXISTS groups (
+              id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+              company_id INT UNSIGNED NOT NULL,
+              name VARCHAR(255) NOT NULL,
+              description TEXT NULL,
+              created_by INT UNSIGNED NOT NULL,
+              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+              is_deleted TINYINT(1) DEFAULT 0,
+              FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+              FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE,
+              INDEX idx_group_company (company_id),
+              INDEX idx_group_created_by (created_by),
+              INDEX idx_group_deleted (is_deleted)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+          `);
+          console.log('✅ Migration completed: groups table created');
+        }
+
+        // Check if group_members table exists
+        const [groupMembersTable] = await pool.execute(
+          `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES 
+           WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'group_members'`
+        );
+        if (groupMembersTable.length === 0) {
+          console.log('📦 Running migration: Creating group_members table...');
+          await pool.execute(`
+            CREATE TABLE IF NOT EXISTS group_members (
+              id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+              group_id INT UNSIGNED NOT NULL,
+              user_id INT UNSIGNED NOT NULL,
+              joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              is_deleted TINYINT(1) DEFAULT 0,
+              FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
+              FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+              UNIQUE KEY unique_group_user (group_id, user_id),
+              INDEX idx_group_member_group (group_id),
+              INDEX idx_group_member_user (user_id),
+              INDEX idx_group_member_deleted (is_deleted)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+          `);
+          console.log('✅ Migration completed: group_members table created');
+        }
+
+        // Check if group_id column exists in messages table
+        const [groupIdCol] = await pool.execute(
+          `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+           WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'messages' AND COLUMN_NAME = 'group_id'`
+        );
+        if (groupIdCol.length === 0) {
+          console.log('📦 Running migration: Adding group_id to messages table...');
+          await pool.execute('ALTER TABLE messages ADD COLUMN group_id INT UNSIGNED NULL AFTER to_user_id');
+          await pool.execute('ALTER TABLE messages ADD INDEX idx_message_group (group_id)');
+          // Add foreign key constraint
+          try {
+            await pool.execute('ALTER TABLE messages ADD CONSTRAINT fk_message_group FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE');
+          } catch (fkErr) {
+            // Foreign key might already exist or groups table doesn't exist yet
+            console.log('⚠️ Note: Could not add foreign key constraint (might already exist)');
+          }
+          console.log('✅ Migration completed: group_id column added to messages');
+        }
+      } catch (groupsErr) {
+        console.error('⚠️ Groups migration error:', groupsErr.message);
+      }
     } catch (clientMigErr) {
       console.error('⚠️ Client migration error:', clientMigErr);
     }

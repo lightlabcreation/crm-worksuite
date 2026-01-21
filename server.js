@@ -29,6 +29,7 @@ const eventRoutes = require('./routes/eventRoutes');
 const departmentRoutes = require('./routes/departmentRoutes');
 const positionRoutes = require('./routes/positionRoutes');
 const messageRoutes = require('./routes/messageRoutes');
+const groupRoutes = require('./routes/groupRoutes');
 const ticketRoutes = require('./routes/ticketRoutes');
 const customFieldRoutes = require('./routes/customFieldRoutes');
 const settingsRoutes = require('./routes/settingsRoutes');
@@ -75,9 +76,7 @@ app.use(
       "http://localhost:5173",
       "https://crm-update.netlify.app",   // ✅ Fixed
       "https://crm-worksuit.netlify.app", // ✅ Fixed
-      "https://crm-new-updated.netlify.app", // ✅ Fixed
-      "https://worksuit-crm.kiaantechnology.com",
-      "https://kiaan-crm.netlify.app"
+      "https://crm-new-updated.netlify.app" // ✅ Fixed
     ],
     credentials: true
   })
@@ -140,6 +139,7 @@ app.use(`${apiBase}/events`, eventRoutes);
 app.use(`${apiBase}/departments`, departmentRoutes);
 app.use(`${apiBase}/positions`, positionRoutes);
 app.use(`${apiBase}/messages`, messageRoutes);
+app.use(`${apiBase}/groups`, groupRoutes);
 app.use(`${apiBase}/tickets`, ticketRoutes);
 app.use(`${apiBase}/custom-fields`, customFieldRoutes);
 app.use(`${apiBase}/settings`, settingsRoutes);
