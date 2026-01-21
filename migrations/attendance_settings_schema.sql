@@ -11,12 +11,18 @@ CREATE TABLE IF NOT EXISTS attendance_settings (
   allow_shift_change_request TINYINT(1) DEFAULT 0,
   save_clock_in_location TINYINT(1) DEFAULT 1,
   allow_self_clock_in TINYINT(1) DEFAULT 1,
+  allow_employee_self_clock_in_out TINYINT(1) DEFAULT 1,
   auto_clock_in_on_login TINYINT(1) DEFAULT 0,
+  auto_clock_in_first_login TINYINT(1) DEFAULT 0,
   check_location_radius TINYINT(1) DEFAULT 0,
+  clock_in_location_radius_check TINYINT(1) DEFAULT 0,
   location_radius_meters INT DEFAULT 100,
+  clock_in_location_radius_value INT DEFAULT 0,
   allow_clock_in_outside_shift TINYINT(1) DEFAULT 0,
   check_ip_address TINYINT(1) DEFAULT 0,
+  clock_in_ip_check TINYINT(1) DEFAULT 0,
   allowed_ip_addresses TEXT,
+  clock_in_ip_addresses TEXT NULL,
   send_monthly_report_email TINYINT(1) DEFAULT 0,
   
   -- Configuration

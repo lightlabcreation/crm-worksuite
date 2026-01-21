@@ -527,14 +527,30 @@ const updateStatus = async (req, res) => {
        WHERE c.id = ?`,
       [id]
     );
+
+    if (!updatedContracts || updatedContracts.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Contract not found after update'
+      });
+    }
+
     const updatedContract = updatedContracts[0];
 
     // Get items
-    const [items] = await pool.execute(
-      `SELECT * FROM contract_items WHERE contract_id = ?`,
-      [id]
-    );
-    updatedContract.items = items || [];
+    let items = [];
+    try {
+      const [itemsResult] = await pool.execute(
+        `SELECT * FROM contract_items WHERE contract_id = ?`,
+        [id]
+      );
+      items = itemsResult || [];
+    } catch (itemsError) {
+      // If contract_items table doesn't exist or query fails, just use empty array
+      console.warn('Could not fetch contract items:', itemsError.message);
+      items = [];
+    }
+    updatedContract.items = items;
 
     res.json({
       success: true,
@@ -543,9 +559,11 @@ const updateStatus = async (req, res) => {
     });
   } catch (error) {
     console.error('Update contract status error:', error);
+    console.error('Error stack:', error.stack);
     res.status(500).json({
       success: false,
-      error: 'Failed to update contract status'
+      error: 'Failed to update contract status',
+      details: error.message
     });
   }
 };

@@ -68,7 +68,6 @@ const API_VERSION = process.env.API_VERSION || 'v1';
 // Security
 app.use(helmet());
 
-// CORS - Allow multiple origins
 app.use(
   cors({
     origin: [

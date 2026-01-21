@@ -30,6 +30,38 @@ const ensureTablesExist = async () => {
         }
       }
       console.log('Attendance settings tables created successfully');
+    } else {
+      // Table exists, check and add missing columns
+      const [existingColumns] = await pool.query(
+        `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+         WHERE TABLE_SCHEMA = DATABASE() 
+         AND TABLE_NAME = 'attendance_settings'`
+      );
+      const columnNames = existingColumns.map(col => col.COLUMN_NAME);
+
+      // List of columns that should exist
+      const requiredColumns = [
+        { name: 'allow_employee_self_clock_in_out', type: 'TINYINT(1) DEFAULT 1' },
+        { name: 'auto_clock_in_first_login', type: 'TINYINT(1) DEFAULT 0' },
+        { name: 'clock_in_location_radius_check', type: 'TINYINT(1) DEFAULT 0' },
+        { name: 'clock_in_location_radius_value', type: 'INT DEFAULT 0' },
+        { name: 'clock_in_ip_check', type: 'TINYINT(1) DEFAULT 0' },
+        { name: 'clock_in_ip_addresses', type: 'TEXT NULL' }
+      ];
+
+      for (const col of requiredColumns) {
+        if (!columnNames.includes(col.name)) {
+          console.log(`Adding ${col.name} column to attendance_settings table...`);
+          try {
+            await pool.query(
+              `ALTER TABLE attendance_settings ADD COLUMN ${col.name} ${col.type}`
+            );
+            console.log(`${col.name} column added successfully`);
+          } catch (e) {
+            console.warn(`Error adding ${col.name} column:`, e.message);
+          }
+        }
+      }
     }
 
     // Check if shifts table exists and add missing columns

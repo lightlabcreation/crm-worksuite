@@ -597,6 +597,7 @@ const update = async (req, res) => {
     } else if (updateFields.discount !== undefined || updateFields.discount_type !== undefined) {
       // If items are NOT updated but discount is updated, recalculate based on existing sub_total
       const subTotal = parseFloat(currentEstimate.sub_total || 0);
+      const taxAmount = parseFloat(currentEstimate.tax_amount || 0);
 
       const discountVal = updateFields.discount !== undefined ? updateFields.discount : currentEstimate.discount;
       const discountType = updateFields.discount_type !== undefined ? updateFields.discount_type : currentEstimate.discount_type;
@@ -608,7 +609,7 @@ const update = async (req, res) => {
         discountAmount = parseFloat(discountVal || 0);
       }
 
-      const total = subTotal - discountAmount;
+      const total = subTotal - discountAmount + taxAmount;
 
       updates.push('discount_amount = ?', 'total = ?');
       values.push(discountAmount, total);

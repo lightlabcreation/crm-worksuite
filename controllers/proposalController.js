@@ -606,6 +606,13 @@ const update = async (req, res) => {
       if (discount !== undefined) updateFields.push('discount = ?'), updateValues.push(discount);
       if (mappedDiscountType !== null) updateFields.push('discount_type = ?'), updateValues.push(mappedDiscountType);
 
+      // Get current proposal data for calculations
+      const [currentProposals] = await connection.execute(
+        `SELECT sub_total, discount, discount_type, tax_amount FROM estimates WHERE id = ?`,
+        [id]
+      );
+      const currentProposal = currentProposals[0] || {};
+
       // Handle Items if provided
       if (items && Array.isArray(items)) {
         // Delete existing items
@@ -632,12 +639,31 @@ const update = async (req, res) => {
         }
 
         // Calculate Totals
-        const totals = calculateTotals(items, discount, mappedDiscountType || '%'); // Make sure calculateTotals is accessible or define it inside
+        const totals = calculateTotals(items, discount !== undefined ? discount : (currentProposal.discount || 0), mappedDiscountType || currentProposal.discount_type || '%');
 
         updateFields.push('sub_total = ?'); updateValues.push(totals.sub_total);
         updateFields.push('discount_amount = ?'); updateValues.push(totals.discount_amount);
         updateFields.push('tax_amount = ?'); updateValues.push(totals.tax_amount);
         updateFields.push('total = ?'); updateValues.push(totals.total);
+      } else if (discount !== undefined || mappedDiscountType !== null) {
+        // If items are NOT updated but discount is updated, recalculate based on existing sub_total
+        const subTotal = parseFloat(currentProposal.sub_total || 0);
+        const taxAmount = parseFloat(currentProposal.tax_amount || 0);
+
+        const discountVal = discount !== undefined ? discount : (currentProposal.discount || 0);
+        const discountType = mappedDiscountType !== null ? mappedDiscountType : (currentProposal.discount_type || '%');
+
+        let discountAmount = 0;
+        if (discountType === '%') {
+          discountAmount = (subTotal * parseFloat(discountVal || 0)) / 100;
+        } else {
+          discountAmount = parseFloat(discountVal || 0);
+        }
+
+        const total = subTotal - discountAmount + taxAmount;
+
+        updateFields.push('discount_amount = ?'); updateValues.push(discountAmount);
+        updateFields.push('total = ?'); updateValues.push(total);
       }
 
       updateFields.push('updated_at = CURRENT_TIMESTAMP');

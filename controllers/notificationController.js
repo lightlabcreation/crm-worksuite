@@ -72,6 +72,7 @@ const getAll = async (req, res) => {
     }
 
     console.log('SQL Query:', `SELECT n.*, u.name as created_by_name FROM notifications n LEFT JOIN users u ON n.created_by = u.id ${whereClause} ORDER BY n.created_at DESC`);
+    // Note: The actual query uses 'users' table, not 'user'
     console.log('Params:', params);
 
     // Get all notifications without pagination

@@ -23,5 +23,8 @@ router.post('/:id/comments', taskController.addComment);
 router.get('/:id/files', taskController.getFiles);
 router.post('/:id/files', uploadSingle('file'), handleUploadError, taskController.uploadFile);
 
+// Task email routes
+router.post('/:id/send-email', taskController.sendEmail);
+
 module.exports = router;
 

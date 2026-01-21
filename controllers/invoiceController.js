@@ -686,12 +686,19 @@ const update = async (req, res) => {
       values.push(updateFields.repeat_type || null);
     }
 
+    // Get current invoice data for calculations
+    const [currentInvoices] = await pool.execute(
+      `SELECT sub_total, discount, discount_type, tax_amount FROM invoices WHERE id = ?`,
+      [id]
+    );
+    const currentInvoice = currentInvoices[0] || {};
+
     // Recalculate totals if items are updated
     if (updateFields.items) {
       const totals = calculateTotals(
         updateFields.items,
-        updateFields.discount || 0,
-        updateFields.discount_type || '%'
+        updateFields.discount !== undefined ? updateFields.discount : (currentInvoice.discount || 0),
+        updateFields.discount_type || currentInvoice.discount_type || '%'
       );
       updates.push('sub_total = ?', 'discount_amount = ?', 'tax_amount = ?', 'total = ?', 'unpaid = ?');
       values.push(totals.sub_total, totals.discount_amount, totals.tax_amount, totals.total, totals.unpaid);
@@ -739,6 +746,25 @@ const update = async (req, res) => {
           [itemValues]
         );
       }
+    } else if (updateFields.discount !== undefined || updateFields.discount_type !== undefined) {
+      // If items are NOT updated but discount is updated, recalculate based on existing sub_total
+      const subTotal = parseFloat(currentInvoice.sub_total || 0);
+      const taxAmount = parseFloat(currentInvoice.tax_amount || 0);
+
+      const discountVal = updateFields.discount !== undefined ? updateFields.discount : (currentInvoice.discount || 0);
+      const discountType = updateFields.discount_type !== undefined ? updateFields.discount_type : (currentInvoice.discount_type || '%');
+
+      let discountAmount = 0;
+      if (discountType === '%') {
+        discountAmount = (subTotal * parseFloat(discountVal || 0)) / 100;
+      } else {
+        discountAmount = parseFloat(discountVal || 0);
+      }
+
+      const total = subTotal - discountAmount + taxAmount;
+
+      updates.push('discount_amount = ?', 'total = ?', 'unpaid = ?');
+      values.push(discountAmount, total, total);
     }
 
     if (updates.length > 0) {

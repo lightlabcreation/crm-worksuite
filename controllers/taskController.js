@@ -1148,6 +1148,144 @@ const getFiles = async (req, res) => {
   }
 };
 
+/**
+ * Send task by email
+ * POST /api/v1/tasks/:id/send-email
+ */
+const sendEmail = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { to, cc, bcc, subject, message } = req.body;
+    const companyId = req.body.company_id || req.query.company_id || req.companyId || 1;
+
+    // Get task with assignee details
+    const [tasks] = await pool.execute(
+      `SELECT t.*, p.project_name, comp.name as company_name
+       FROM tasks t
+       LEFT JOIN projects p ON t.project_id = p.id
+       LEFT JOIN companies comp ON t.company_id = comp.id
+       WHERE t.id = ? AND t.is_deleted = 0`,
+      [id]
+    );
+
+    if (tasks.length === 0) {
+      return res.status(404).json({ success: false, error: 'Task not found' });
+    }
+
+    const task = tasks[0];
+
+    // Get assignees
+    const [assignees] = await pool.execute(
+      `SELECT u.id, u.name, u.email FROM task_assignees ta
+       JOIN users u ON ta.user_id = u.id
+       WHERE ta.task_id = ?`,
+      [task.id]
+    );
+    task.assigned_to = assignees;
+
+    // Generate task URL
+    const taskUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/app/admin/tasks?task=${id}`;
+
+    // Use email template renderer
+    const { renderEmailTemplate } = require('../utils/emailTemplateRenderer');
+    const { sendEmail: sendEmailUtil } = require('../utils/emailService');
+
+    // Build data object for template
+    const assigneeNames = assignees.map(a => a.name || a.email).join(', ');
+    const assigneeEmails = assignees.map(a => a.email).filter(Boolean).join(', ');
+    
+    const templateData = {
+      TASK_TITLE: task.title || 'Task',
+      TASK_URL: taskUrl,
+      ASSIGNEE: assigneeNames || 'Unassigned',
+      ASSIGNEE_EMAIL: assigneeEmails || '',
+      DEADLINE: task.due_date ? new Date(task.due_date).toLocaleDateString() : 'No deadline',
+      CONTACT_FIRST_NAME: assignees[0]?.name?.split(' ')[0] || assignees[0]?.email?.split('@')[0] || 'Team Member',
+      COMPANY_NAME: task.company_name || 'Our Company',
+      SIGNATURE: process.env.EMAIL_SIGNATURE || 'Best regards,<br>Your Team',
+      LOGO_URL: ''
+    };
+
+    // Render template (or use provided message)
+    let emailSubject, emailHTML;
+    if (message) {
+      // Use custom message if provided
+      emailSubject = subject || `Task: ${task.title}`;
+      emailHTML = message;
+    } else {
+      // Use template - try task_assigned first, fallback to task_general
+      try {
+        let rendered = await renderEmailTemplate('task_assigned', templateData, companyId);
+        if (!rendered || !rendered.body) {
+          // Fallback to task_general
+          rendered = await renderEmailTemplate('task_general', templateData, companyId);
+        }
+        emailSubject = subject || rendered.subject || `Task: ${task.title}`;
+        emailHTML = rendered.body || `<p>Task: ${task.title} - ${templateData.TASK_URL}</p>`;
+      } catch (templateError) {
+        console.warn('Template rendering error:', templateError.message);
+        // Fallback to basic template
+        emailSubject = subject || `Task: ${task.title}`;
+        emailHTML = `<div style="padding: 20px; font-family: Arial, sans-serif;">
+          <h2>Task: ${templateData.TASK_TITLE}</h2>
+          <p>Hello ${templateData.CONTACT_FIRST_NAME},</p>
+          <p>Please find task details below:</p>
+          <p><strong>Task:</strong> ${templateData.TASK_TITLE}</p>
+          ${templateData.DEADLINE !== 'No deadline' ? `<p><strong>Deadline:</strong> ${templateData.DEADLINE}</p>` : ''}
+          <p><a href="${templateData.TASK_URL}">View Task</a></p>
+          <p>${templateData.SIGNATURE}</p>
+        </div>`;
+      }
+    }
+
+    // Send email
+    const recipientEmail = to || assigneeEmails || assignees[0]?.email;
+    if (!recipientEmail) {
+      return res.status(400).json({ success: false, error: 'Recipient email is required' });
+    }
+
+    // Handle CC and BCC from request body
+    const emailOptions = {
+      to: recipientEmail,
+      cc: cc || undefined,
+      bcc: bcc || undefined,
+      subject: emailSubject,
+      html: emailHTML,
+      text: `Please view the task at: ${taskUrl}`
+    };
+
+    console.log('=== SENDING TASK EMAIL ===');
+    console.log('Email options:', { ...emailOptions, html: emailOptions.html ? 'HTML provided' : 'No HTML' });
+
+    const emailResult = await sendEmailUtil(emailOptions);
+
+    if (!emailResult.success) {
+      console.error('Email sending failed:', emailResult.error);
+      return res.status(500).json({ 
+        success: false, 
+        error: emailResult.error || 'Failed to send task email',
+        details: process.env.NODE_ENV === 'development' ? emailResult.message : undefined
+      });
+    }
+
+    console.log('✅ Task email sent successfully');
+
+    res.json({ 
+      success: true, 
+      message: 'Task sent successfully',
+      data: { email: recipientEmail, messageId: emailResult.messageId }
+    });
+  } catch (error) {
+    console.error('=== SEND TASK EMAIL ERROR ===');
+    console.error('Error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to send task email',
+      details: error.message
+    });
+  }
+};
+
 module.exports = {
   getAll,
   getById,
@@ -1157,6 +1295,7 @@ module.exports = {
   addComment,
   getComments,
   uploadFile,
-  getFiles
+  getFiles,
+  sendEmail
 };
 
