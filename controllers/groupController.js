@@ -112,7 +112,7 @@ const getAll = async (req, res) => {
                  AND m.is_deleted = 0 
                ORDER BY m.created_at DESC 
                LIMIT 1) as last_message_time
-       FROM groups g
+       FROM \`groups\` g
        INNER JOIN group_members gm ON g.id = gm.group_id
        LEFT JOIN users creator ON g.created_by = creator.id
        WHERE g.company_id = ? 
@@ -173,7 +173,7 @@ const getById = async (req, res) => {
       `SELECT g.*, 
               creator.name as creator_name,
               creator.email as creator_email
-       FROM groups g
+       FROM \`groups\` g
        LEFT JOIN users creator ON g.created_by = creator.id
        WHERE g.id = ? AND g.company_id = ? AND g.is_deleted = 0`,
       [id, companyId]
@@ -262,7 +262,7 @@ const create = async (req, res) => {
 
     // Create group
     const [groupResult] = await pool.execute(
-      `INSERT INTO groups (company_id, name, description, created_by, created_at)
+      `INSERT INTO \`groups\` (company_id, name, description, created_by, created_at)
        VALUES (?, ?, ?, ?, NOW())`,
       [companyId, name.trim(), description || null, userId]
     );
@@ -292,7 +292,7 @@ const create = async (req, res) => {
       `SELECT g.*, 
               creator.name as creator_name,
               creator.email as creator_email
-       FROM groups g
+       FROM \`groups\` g
        LEFT JOIN users creator ON g.created_by = creator.id
        WHERE g.id = ?`,
       [groupId]
@@ -344,7 +344,7 @@ const update = async (req, res) => {
 
     // Check if user is creator or admin
     const [groups] = await pool.execute(
-      `SELECT * FROM groups 
+      `SELECT * FROM \`groups\` 
        WHERE id = ? AND company_id = ? AND is_deleted = 0`,
       [id, companyId]
     );
@@ -387,7 +387,7 @@ const update = async (req, res) => {
     values.push(id, companyId);
 
     await pool.execute(
-      `UPDATE groups SET ${updates.join(', ')}, updated_at = NOW()
+      `UPDATE \`groups\` SET ${updates.join(', ')}, updated_at = NOW()
        WHERE id = ? AND company_id = ?`,
       values
     );
@@ -432,7 +432,7 @@ const addMembers = async (req, res) => {
 
     // Check if user is creator
     const [groups] = await pool.execute(
-      `SELECT * FROM groups 
+      `SELECT * FROM \`groups\` 
        WHERE id = ? AND company_id = ? AND created_by = ? AND is_deleted = 0`,
       [id, companyId, userId]
     );
@@ -512,7 +512,7 @@ const removeMember = async (req, res) => {
 
     // Check if user is creator or removing themselves
     const [groups] = await pool.execute(
-      `SELECT * FROM groups 
+      `SELECT * FROM \`groups\` 
        WHERE id = ? AND company_id = ? AND is_deleted = 0`,
       [id, companyId]
     );
@@ -581,7 +581,7 @@ const deleteGroup = async (req, res) => {
 
     // Check if user is creator
     const [groups] = await pool.execute(
-      `SELECT * FROM groups 
+      `SELECT * FROM \`groups\` 
        WHERE id = ? AND company_id = ? AND created_by = ? AND is_deleted = 0`,
       [id, companyId, userId]
     );
@@ -594,7 +594,7 @@ const deleteGroup = async (req, res) => {
     }
 
     await pool.execute(
-      `UPDATE groups SET is_deleted = 1, updated_at = NOW()
+      `UPDATE \`groups\` SET is_deleted = 1, updated_at = NOW()
        WHERE id = ?`,
       [id]
     );

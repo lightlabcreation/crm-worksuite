@@ -5,6 +5,37 @@
 const pool = require('../config/db');
 
 /**
+ * Normalize unit value to valid ENUM values
+ * Valid values: 'Pcs', 'Kg', 'Hours', 'Days'
+ */
+const normalizeUnit = (unit) => {
+  const validUnits = ['Pcs', 'Kg', 'Hours', 'Days'];
+  
+  if (!unit) {
+    return 'Pcs'; // Default
+  }
+  
+  // If already valid, return as is
+  if (validUnits.includes(unit)) {
+    return unit;
+  }
+  
+  // Normalize to valid ENUM value
+  const unitLower = String(unit).toLowerCase().trim();
+  if (unitLower.includes('pc') || unitLower.includes('piece')) {
+    return 'Pcs';
+  } else if (unitLower.includes('kg') || unitLower.includes('kilogram')) {
+    return 'Kg';
+  } else if (unitLower.includes('hour')) {
+    return 'Hours';
+  } else if (unitLower.includes('day')) {
+    return 'Days';
+  } else {
+    return 'Pcs'; // Default fallback
+  }
+};
+
+/**
  * Generate invoice number
  */
 const generateInvoiceNumber = async (companyId) => {
@@ -500,7 +531,7 @@ const create = async (req, res) => {
           itemName,
           item.description || null,
           quantity,
-          item.unit || 'Pcs',
+          normalizeUnit(item.unit), // Normalized unit value
           unitPrice,
           item.tax || null,
           taxRate,
@@ -692,7 +723,7 @@ const update = async (req, res) => {
             itemName,
             item.description || null,
             quantity,
-            item.unit || 'Pcs',
+            normalizeUnit(item.unit), // Normalized unit value
             unitPrice,
             item.tax || null,
             taxRate,
@@ -983,7 +1014,7 @@ const createRecurring = async (req, res) => {
           itemName,
           item.description || null,
           quantity,
-          item.unit || 'Pcs',
+          normalizeUnit(item.unit), // Normalized unit value
           unitPrice,
           item.tax || null,
           taxRate,

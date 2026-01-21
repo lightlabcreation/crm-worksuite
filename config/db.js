@@ -868,7 +868,7 @@ pool.getConnection()
         if (groupsTable.length === 0) {
           console.log('📦 Running migration: Creating groups table...');
           await pool.execute(`
-            CREATE TABLE IF NOT EXISTS groups (
+            CREATE TABLE IF NOT EXISTS \`groups\` (
               id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
               company_id INT UNSIGNED NOT NULL,
               name VARCHAR(255) NOT NULL,
@@ -901,7 +901,7 @@ pool.getConnection()
               user_id INT UNSIGNED NOT NULL,
               joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
               is_deleted TINYINT(1) DEFAULT 0,
-              FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
+              FOREIGN KEY (group_id) REFERENCES \`groups\`(id) ON DELETE CASCADE,
               FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
               UNIQUE KEY unique_group_user (group_id, user_id),
               INDEX idx_group_member_group (group_id),
@@ -923,7 +923,7 @@ pool.getConnection()
           await pool.execute('ALTER TABLE messages ADD INDEX idx_message_group (group_id)');
           // Add foreign key constraint
           try {
-            await pool.execute('ALTER TABLE messages ADD CONSTRAINT fk_message_group FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE');
+            await pool.execute('ALTER TABLE messages ADD CONSTRAINT fk_message_group FOREIGN KEY (group_id) REFERENCES `groups`(id) ON DELETE CASCADE');
           } catch (fkErr) {
             // Foreign key might already exist or groups table doesn't exist yet
             console.log('⚠️ Note: Could not add foreign key constraint (might already exist)');

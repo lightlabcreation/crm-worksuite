@@ -4,6 +4,37 @@
 
 const pool = require('../config/db');
 
+/**
+ * Normalize unit value to valid ENUM values
+ * Valid values: 'Pcs', 'Kg', 'Hours', 'Days'
+ */
+const normalizeUnit = (unit) => {
+  const validUnits = ['Pcs', 'Kg', 'Hours', 'Days'];
+  
+  if (!unit) {
+    return 'Pcs'; // Default
+  }
+  
+  // If already valid, return as is
+  if (validUnits.includes(unit)) {
+    return unit;
+  }
+  
+  // Normalize to valid ENUM value
+  const unitLower = String(unit).toLowerCase().trim();
+  if (unitLower.includes('pc') || unitLower.includes('piece')) {
+    return 'Pcs';
+  } else if (unitLower.includes('kg') || unitLower.includes('kilogram')) {
+    return 'Kg';
+  } else if (unitLower.includes('hour')) {
+    return 'Hours';
+  } else if (unitLower.includes('day')) {
+    return 'Days';
+  } else {
+    return 'Pcs'; // Default fallback
+  }
+};
+
 const generateEstimateNumber = async (companyId) => {
   try {
     // Find the highest existing estimate number globally (estimate_number has UNIQUE constraint)
@@ -357,30 +388,13 @@ const create = async (req, res) => {
     if (items.length > 0) {
       console.log('Inserting items:', items.length);
       
-      // Validate and map unit to valid ENUM values
-      const validUnits = ['Pcs', 'Kg', 'Hours', 'Days'];
-      
       const itemValues = items.map(item => {
         const quantity = parseFloat(item.quantity || 1);
         const unitPrice = parseFloat(item.unit_price || 0);
         const taxRate = parseFloat(item.tax_rate || 0);
 
-        // Validate and map unit to valid ENUM values
-        let unitValue = item.unit || 'Pcs';
-        if (!validUnits.includes(unitValue)) {
-          const unitLower = String(unitValue).toLowerCase().trim();
-          if (unitLower.includes('pc') || unitLower.includes('piece')) {
-            unitValue = 'Pcs';
-          } else if (unitLower.includes('kg') || unitLower.includes('kilogram')) {
-            unitValue = 'Kg';
-          } else if (unitLower.includes('hour')) {
-            unitValue = 'Hours';
-          } else if (unitLower.includes('day')) {
-            unitValue = 'Days';
-          } else {
-            unitValue = 'Pcs';
-          }
-        }
+        // Normalize unit to valid ENUM value
+        const unitValue = normalizeUnit(item.unit);
 
         // Calculate amount: (quantity * unit_price) + tax
         let amount = quantity * unitPrice;
@@ -544,6 +558,9 @@ const update = async (req, res) => {
           const unitPrice = parseFloat(item.unit_price || 0);
           const taxRate = parseFloat(item.tax_rate || 0);
 
+          // Normalize unit to valid ENUM value
+          const unitValue = normalizeUnit(item.unit);
+
           // Calculate amount: (quantity * unit_price) + tax
           let amount = quantity * unitPrice;
           if (taxRate > 0) {
@@ -560,7 +577,7 @@ const update = async (req, res) => {
             item.item_name,
             item.description || null,
             quantity,
-            item.unit || 'Pcs',
+            unitValue, // Now guaranteed to be valid ENUM value
             unitPrice,
             item.tax || null,
             taxRate,
@@ -811,7 +828,7 @@ const convertToInvoice = async (req, res) => {
         item_name: item.item_name,
         description: item.description || null,
         quantity: quantity,
-        unit: item.unit || 'Pcs',
+        unit: normalizeUnit(item.unit), // Normalized unit value
         unit_price: unitPrice,
         tax: item.tax || null,
         tax_rate: taxRate,
@@ -850,7 +867,7 @@ const convertToInvoice = async (req, res) => {
           item.item_name,
           item.description || null,
           quantity,
-          item.unit || 'Pcs',
+          normalizeUnit(item.unit), // Normalized unit value
           unitPrice,
           item.tax || null,
           taxRate,

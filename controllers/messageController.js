@@ -268,7 +268,7 @@ const create = async (req, res) => {
 
       // Verify group exists and belongs to company
       const [groups] = await pool.execute(
-        `SELECT * FROM groups 
+        `SELECT * FROM \`groups\` 
          WHERE id = ? AND company_id = ? AND is_deleted = 0`,
         [group_id, companyId]
       );

@@ -4,6 +4,37 @@
 
 const pool = require('../config/db');
 
+/**
+ * Normalize unit value to valid ENUM values
+ * Valid values: 'Pcs', 'Kg', 'Hours', 'Days'
+ */
+const normalizeUnit = (unit) => {
+  const validUnits = ['Pcs', 'Kg', 'Hours', 'Days'];
+  
+  if (!unit) {
+    return 'Pcs'; // Default
+  }
+  
+  // If already valid, return as is
+  if (validUnits.includes(unit)) {
+    return unit;
+  }
+  
+  // Normalize to valid ENUM value
+  const unitLower = String(unit).toLowerCase().trim();
+  if (unitLower.includes('pc') || unitLower.includes('piece')) {
+    return 'Pcs';
+  } else if (unitLower.includes('kg') || unitLower.includes('kilogram')) {
+    return 'Kg';
+  } else if (unitLower.includes('hour')) {
+    return 'Hours';
+  } else if (unitLower.includes('day')) {
+    return 'Days';
+  } else {
+    return 'Pcs'; // Default fallback
+  }
+};
+
 // Helper function to format date for MySQL (handles ISO format like 2026-01-30T00:00:00.000Z)
 const formatDateForMySQL = (dateValue) => {
   if (!dateValue || dateValue === '') return null;
@@ -439,26 +470,8 @@ const create = async (req, res) => {
       console.log('Inserting items:', items.length);
       for (const item of items) {
         try {
-          // Validate and map unit to valid ENUM values
-          const validUnits = ['Pcs', 'Kg', 'Hours', 'Days'];
-          let unitValue = item.unit || 'Pcs';
-          
-          // If unit is not in valid enum, try to map common values
-          if (!validUnits.includes(unitValue)) {
-            const unitLower = String(unitValue).toLowerCase().trim();
-            if (unitLower.includes('pc') || unitLower.includes('piece')) {
-              unitValue = 'Pcs';
-            } else if (unitLower.includes('kg') || unitLower.includes('kilogram')) {
-              unitValue = 'Kg';
-            } else if (unitLower.includes('hour')) {
-              unitValue = 'Hours';
-            } else if (unitLower.includes('day')) {
-              unitValue = 'Days';
-            } else {
-              // Default to 'Pcs' if no match
-              unitValue = 'Pcs';
-            }
-          }
+          // Normalize unit to valid ENUM value
+          const unitValue = normalizeUnit(item.unit);
           
           // Truncate item_name if too long (max 255 chars)
           const itemName = String(item.item_name || '').substring(0, 255);
@@ -609,7 +622,7 @@ const update = async (req, res) => {
               item.item_name || '',
               item.description || '',
               item.quantity || 1,
-              item.unit || 'Pcs',
+              normalizeUnit(item.unit), // Normalized unit value
               item.unit_price || 0,
               item.tax || '',
               item.tax_rate || 0,
@@ -1207,7 +1220,7 @@ const duplicate = async (req, res) => {
         item.item_name || '',
         item.description || null,
         item.quantity || 1,
-        item.unit || 'Pcs',
+        normalizeUnit(item.unit), // Normalized unit value
         item.unit_price || 0,
         item.tax || null,
         item.tax_rate || 0,
