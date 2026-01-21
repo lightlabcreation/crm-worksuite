@@ -5,10 +5,52 @@
 const pool = require('../config/db');
 
 /**
+ * Ensure notifications table exists
+ */
+const ensureTableExists = async () => {
+  try {
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS notifications (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        company_id INT NULL,
+        user_id INT NOT NULL,
+        type VARCHAR(50) NOT NULL,
+        title VARCHAR(255) NOT NULL,
+        message TEXT NOT NULL,
+        link VARCHAR(500) NULL,
+        related_entity_type VARCHAR(50) NULL,
+        related_entity_id INT NULL,
+        is_read TINYINT(1) DEFAULT 0,
+        read_at DATETIME NULL,
+        created_by INT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        is_deleted TINYINT(1) DEFAULT 0,
+        FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE SET NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+        INDEX idx_user_id (user_id),
+        INDEX idx_is_read (is_read),
+        INDEX idx_type (type),
+        INDEX idx_company_id (company_id),
+        INDEX idx_created_at (created_at),
+        INDEX idx_is_deleted (is_deleted)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+    return true;
+  } catch (error) {
+    console.error('Error ensuring notifications table exists:', error);
+    return false;
+  }
+};
+
+/**
  * Get all notifications
  * GET /api/v1/notifications
  */
 const getAll = async (req, res) => {
+  // Ensure table exists before querying
+  await ensureTableExists();
   try {
     console.log('=== GET ALL NOTIFICATIONS ===');
     console.log('Query params:', req.query);
@@ -117,6 +159,8 @@ const getAll = async (req, res) => {
  * GET /api/v1/notifications/:id
  */
 const getById = async (req, res) => {
+  // Ensure table exists before querying
+  await ensureTableExists();
   try {
     const { id } = req.params;
     const userId = req.query.user_id || req.body.user_id || 1;
@@ -160,6 +204,8 @@ const getById = async (req, res) => {
  * POST /api/v1/notifications
  */
 const create = async (req, res) => {
+  // Ensure table exists before inserting
+  await ensureTableExists();
   try {
     const {
       user_id,
@@ -280,6 +326,8 @@ const create = async (req, res) => {
  * PUT /api/v1/notifications/:id/read
  */
 const markAsRead = async (req, res) => {
+  // Ensure table exists before updating
+  await ensureTableExists();
   try {
     const { id } = req.params;
     const userId = req.query.user_id || req.body.user_id || 1;
@@ -340,6 +388,8 @@ const markAllAsRead = async (req, res) => {
  * DELETE /api/v1/notifications/:id
  */
 const deleteNotification = async (req, res) => {
+  // Ensure table exists before deleting
+  await ensureTableExists();
   try {
     const { id } = req.params;
     const userId = req.query.user_id || req.body.user_id || 1;
