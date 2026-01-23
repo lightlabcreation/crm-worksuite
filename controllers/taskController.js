@@ -171,14 +171,28 @@ const getAll = async (req, res) => {
       whereClause += ' AND t.status = ?';
       params.push(status);
     }
-    if (project_id) {
-      whereClause += ' AND t.project_id = ?';
-      params.push(project_id);
+    
+    // Handle project_id and client_id with OR logic when both are provided
+    // This allows fetching tasks that match either client or project (useful for invoice/estimate detail pages)
+    const hasClientId = req.query.client_id;
+    const hasProjectId = project_id;
+    
+    if (hasClientId && hasProjectId) {
+      // If both are provided, use OR logic to get tasks matching either
+      whereClause += ' AND (t.client_id = ? OR t.project_id = ?)';
+      params.push(req.query.client_id, project_id);
+    } else {
+      // If only one is provided, use AND logic as before
+      if (hasProjectId) {
+        whereClause += ' AND t.project_id = ?';
+        params.push(project_id);
+      }
+      if (hasClientId) {
+        whereClause += ' AND t.client_id = ?';
+        params.push(req.query.client_id);
+      }
     }
-    if (req.query.client_id) {
-      whereClause += ' AND t.client_id = ?';
-      params.push(req.query.client_id);
-    }
+    
     if (req.query.lead_id) {
       whereClause += ' AND t.lead_id = ?';
       params.push(req.query.lead_id);

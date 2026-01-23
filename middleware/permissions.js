@@ -23,7 +23,7 @@ const getModuleFromPath = (path, method) => {
   // Extract module name from path
   // Examples: /api/v1/proposals -> proposals, /api/v1/invoices/123 -> invoices
   const pathParts = path.split('/').filter(p => p);
-  
+
   // Find the module name (usually after /api/v1/)
   const apiIndex = pathParts.indexOf('api');
   if (apiIndex !== -1 && pathParts[apiIndex + 1] === 'v1') {
@@ -32,13 +32,13 @@ const getModuleFromPath = (path, method) => {
       return pathParts[moduleIndex].toLowerCase();
     }
   }
-  
+
   // Fallback: try to extract from path
   const moduleMatch = path.match(/\/api\/v1\/([^\/]+)/);
   if (moduleMatch) {
     return moduleMatch[1].toLowerCase();
   }
-  
+
   return null;
 };
 
@@ -74,7 +74,7 @@ const mapModuleNameToKey = (moduleName, userRole) => {
     'billing': 'billing',
     'subscriptions': 'subscriptions',
   };
-  
+
   return moduleMap[moduleName] || moduleName;
 };
 
@@ -106,7 +106,7 @@ const checkPermission = (permissionType, module) => {
 
       // Get module name from path if not provided
       const moduleName = module || getModuleFromPath(req.path, req.method);
-      
+
       if (!moduleName) {
         // If we can't determine module, allow access (for backward compatibility)
         return next();
@@ -138,18 +138,18 @@ const checkPermission = (permissionType, module) => {
 
         try {
           if (settings.client_menus) {
-            clientMenus = typeof settings.client_menus === 'string' 
-              ? JSON.parse(settings.client_menus) 
+            clientMenus = typeof settings.client_menus === 'string'
+              ? JSON.parse(settings.client_menus)
               : settings.client_menus;
           }
           if (settings.employee_menus) {
-            employeeMenus = typeof settings.employee_menus === 'string' 
-              ? JSON.parse(settings.employee_menus) 
+            employeeMenus = typeof settings.employee_menus === 'string'
+              ? JSON.parse(settings.employee_menus)
               : settings.employee_menus;
           }
           if (settings.module_permissions) {
-            modulePerms = typeof settings.module_permissions === 'string' 
-              ? JSON.parse(settings.module_permissions) 
+            modulePerms = typeof settings.module_permissions === 'string'
+              ? JSON.parse(settings.module_permissions)
               : settings.module_permissions;
           }
         } catch (e) {
@@ -158,9 +158,9 @@ const checkPermission = (permissionType, module) => {
 
         // Map module name (e.g., 'tasks' -> 'myTasks' for employee)
         const moduleKey = mapModuleNameToKey(moduleName, userRole);
-        
+
         // Check if module is enabled
-        const isModuleEnabled = userRole === 'CLIENT' 
+        const isModuleEnabled = userRole === 'CLIENT'
           ? clientMenus[moduleKey] !== false
           : employeeMenus[moduleKey] !== false;
 
@@ -175,7 +175,7 @@ const checkPermission = (permissionType, module) => {
         if (modulePerms[moduleKey]) {
           const modulePermission = modulePerms[moduleKey];
           const hasPermission = modulePermission[permissionType] === true || modulePermission[permissionType] === 1;
-          
+
           if (!hasPermission) {
             return res.status(403).json({
               success: false,
@@ -257,7 +257,7 @@ const requirePermission = (module = null) => {
 
       // Get module name
       const moduleName = module || getModuleFromPath(req.path, req.method);
-      
+
       if (!moduleName) {
         // If we can't determine module, allow access (for backward compatibility)
         return next();
@@ -277,19 +277,26 @@ const requirePermission = (module = null) => {
 
       // Get role_id from roles table
       const companyId = req.companyId || req.query.company_id || req.body.company_id || 1;
-      const [roles] = await pool.execute(
-        'SELECT id FROM roles WHERE role_name = ? AND company_id = ? AND is_deleted = 0',
-        [userRole, companyId]
-      );
 
-      if (roles.length === 0) {
-        return res.status(403).json({
-          success: false,
-          error: `Role '${userRole}' not found or no permissions configured`
-        });
+      // System roles (CLIENT, EMPLOYEE) don't need role_id lookup
+      const systemRoles = ['SUPERADMIN', 'ADMIN', 'CLIENT', 'EMPLOYEE'];
+      let roleId = null;
+
+      if (!systemRoles.includes(userRole)) {
+        const [roles] = await pool.execute(
+          'SELECT id FROM roles WHERE role_name = ? AND company_id = ? AND is_deleted = 0',
+          [userRole, companyId]
+        );
+
+        if (roles.length === 0) {
+          return res.status(403).json({
+            success: false,
+            error: `Role '${userRole}' not found or no permissions configured`
+          });
+        }
+
+        roleId = roles[0].id;
       }
-
-      const roleId = roles[0].id;
 
       // First check if module is enabled in module_settings
       const [moduleSettings] = await pool.execute(
@@ -305,18 +312,18 @@ const requirePermission = (module = null) => {
 
         try {
           if (settings.client_menus) {
-            clientMenus = typeof settings.client_menus === 'string' 
-              ? JSON.parse(settings.client_menus) 
+            clientMenus = typeof settings.client_menus === 'string'
+              ? JSON.parse(settings.client_menus)
               : settings.client_menus;
           }
           if (settings.employee_menus) {
-            employeeMenus = typeof settings.employee_menus === 'string' 
-              ? JSON.parse(settings.employee_menus) 
+            employeeMenus = typeof settings.employee_menus === 'string'
+              ? JSON.parse(settings.employee_menus)
               : settings.employee_menus;
           }
           if (settings.module_permissions) {
-            modulePerms = typeof settings.module_permissions === 'string' 
-              ? JSON.parse(settings.module_permissions) 
+            modulePerms = typeof settings.module_permissions === 'string'
+              ? JSON.parse(settings.module_permissions)
               : settings.module_permissions;
           }
         } catch (e) {
@@ -325,9 +332,9 @@ const requirePermission = (module = null) => {
 
         // Map module name (e.g., 'tasks' -> 'myTasks' for employee)
         const moduleKey = mapModuleNameToKey(moduleName, userRole);
-        
+
         // Check if module is enabled
-        const isModuleEnabled = userRole === 'CLIENT' 
+        const isModuleEnabled = userRole === 'CLIENT'
           ? clientMenus[moduleKey] !== false
           : employeeMenus[moduleKey] !== false;
 
@@ -342,7 +349,7 @@ const requirePermission = (module = null) => {
         if (modulePerms[moduleKey]) {
           const modulePermission = modulePerms[moduleKey];
           const hasPermission = modulePermission[permissionType] === true || modulePermission[permissionType] === 1;
-          
+
           if (!hasPermission) {
             return res.status(403).json({
               success: false,

@@ -171,11 +171,55 @@ const getAll = async (req, res) => {
       expenses = expensesResult || [];
     } catch (joinError) {
       console.warn('Error with JOIN, trying without:', joinError.message);
+      // Try to get client names separately if JOIN failed
       const [expensesResult] = await pool.execute(
         `SELECT e.* FROM expenses e ${whereClause} ORDER BY e.${sortColumn} ${sortDirection} LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}`,
         params
       );
       expenses = expensesResult || [];
+      
+      // Manually fetch client names for expenses that have client_id
+      for (let expense of expenses) {
+        if (expense.client_id) {
+          try {
+            const [clients] = await pool.execute(
+              `SELECT company_name FROM clients WHERE id = ? AND is_deleted = 0`,
+              [expense.client_id]
+            );
+            if (clients.length > 0) {
+              expense.client_name = clients[0].company_name;
+            }
+          } catch (e) {
+            console.warn('Error fetching client name for expense:', expense.id, e.message);
+          }
+        }
+        if (expense.project_id) {
+          try {
+            const [projects] = await pool.execute(
+              `SELECT project_name FROM projects WHERE id = ? AND is_deleted = 0`,
+              [expense.project_id]
+            );
+            if (projects.length > 0) {
+              expense.project_name = projects[0].project_name;
+            }
+          } catch (e) {
+            console.warn('Error fetching project name for expense:', expense.id, e.message);
+          }
+        }
+        if (expense.employee_id) {
+          try {
+            const [users] = await pool.execute(
+              `SELECT name FROM users WHERE id = ?`,
+              [expense.employee_id]
+            );
+            if (users.length > 0) {
+              expense.employee_name = users[0].name;
+            }
+          } catch (e) {
+            console.warn('Error fetching employee name for expense:', expense.id, e.message);
+          }
+        }
+      }
     }
 
     // Calculate totals dynamically for each expense

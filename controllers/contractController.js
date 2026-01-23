@@ -1,5 +1,36 @@
 const pool = require('../config/db');
 
+/**
+ * Normalize unit value to valid ENUM values
+ * Valid values: 'Pcs', 'Kg', 'Hours', 'Days'
+ */
+const normalizeUnit = (unit) => {
+  const validUnits = ['Pcs', 'Kg', 'Hours', 'Days'];
+  
+  if (!unit || unit === '') {
+    return 'Pcs'; // Default
+  }
+  
+  // If already valid, return as is
+  if (validUnits.includes(unit)) {
+    return unit;
+  }
+  
+  // Normalize to valid ENUM value
+  const unitLower = String(unit).toLowerCase().trim();
+  if (unitLower.includes('pc') || unitLower.includes('piece')) {
+    return 'Pcs';
+  } else if (unitLower.includes('kg') || unitLower.includes('kilogram')) {
+    return 'Kg';
+  } else if (unitLower.includes('hour')) {
+    return 'Hours';
+  } else if (unitLower.includes('day')) {
+    return 'Days';
+  } else {
+    return 'Pcs'; // Default fallback
+  }
+};
+
 const calculateTotals = (items, discount, discountType) => {
   let subTotal = 0;
   let taxAmount = 0;
@@ -221,6 +252,9 @@ const create = async (req, res) => {
       // Handle Items
       if (items && Array.isArray(items)) {
         for (const item of items) {
+          // Normalize unit to valid ENUM value
+          const normalizedUnit = normalizeUnit(item.unit);
+          
           await connection.execute(
             `INSERT INTO contract_items 
              (contract_id, item_name, description, quantity, unit, unit_price, tax, tax_rate, amount)
@@ -230,7 +264,7 @@ const create = async (req, res) => {
               item.item_name || '',
               item.description || '',
               item.quantity || 1,
-              item.unit || 'Pcs',
+              normalizedUnit,
               item.unit_price || 0,
               item.tax || '',
               item.tax_rate || 0,
@@ -358,6 +392,9 @@ const update = async (req, res) => {
 
         // Insert new items
         for (const item of items) {
+          // Normalize unit to valid ENUM value
+          const normalizedUnit = normalizeUnit(item.unit);
+          
           await connection.execute(
             `INSERT INTO contract_items 
              (contract_id, item_name, description, quantity, unit, unit_price, tax, tax_rate, amount)
@@ -367,7 +404,7 @@ const update = async (req, res) => {
               item.item_name || '',
               item.description || '',
               item.quantity || 1,
-              item.unit || 'Pcs',
+              normalizedUnit,
               item.unit_price || 0,
               item.tax || '',
               item.tax_rate || 0,
