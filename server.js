@@ -79,7 +79,7 @@ app.use(
       "https://wms-worksuiit.netlify.app",
       "https://kiaan-crm.netlify.app",
       "https://worksuit-crm.kiaantechnology.com"
-    ],s
+    ],
     credentials: true
   })
 );
