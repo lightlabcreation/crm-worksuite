@@ -26,5 +26,17 @@ router.post('/:id/files', uploadSingle('file'), handleUploadError, taskControlle
 // Task email routes
 router.post('/:id/send-email', taskController.sendEmail);
 
+// Task notes routes
+router.get('/:id/notes', taskController.getNotes);
+router.post('/:id/notes', taskController.addNote);
+router.put('/:id/notes/:noteId', taskController.updateNote);
+router.delete('/:id/notes/:noteId', taskController.deleteNote);
+
+// Task subtasks routes
+router.get('/:id/subtasks', taskController.getSubtasks);
+router.post('/:id/subtasks', taskController.addSubtask);
+router.put('/:id/subtasks/:subtaskId', taskController.updateSubtask);
+router.delete('/:id/subtasks/:subtaskId', taskController.deleteSubtask);
+
 module.exports = router;
 

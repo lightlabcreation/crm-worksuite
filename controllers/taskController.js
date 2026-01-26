@@ -984,12 +984,32 @@ const deleteTask = async (req, res) => {
 const addComment = async (req, res) => {
   try {
     const { id } = req.params;
-    const { comment, file_path } = req.body;
+    const { comment, file_path, user_id, company_id } = req.body;
+
+    // Get company_id from query, body, or req.companyId
+    const companyId = req.query.company_id || company_id || req.companyId || req.user?.company_id;
+    
+    // Get user_id from body, req.userId, or req.user.id
+    const userId = user_id || req.userId || req.user?.id;
+
+    if (!companyId) {
+      return res.status(400).json({
+        success: false,
+        error: 'company_id is required'
+      });
+    }
+
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: 'user_id is required'
+      });
+    }
 
     // Check if task exists
     const [tasks] = await pool.execute(
       `SELECT id FROM tasks WHERE id = ? AND company_id = ? AND is_deleted = 0`,
-      [id, req.companyId]
+      [id, companyId]
     );
 
     if (tasks.length === 0) {
@@ -1010,7 +1030,7 @@ const addComment = async (req, res) => {
     const [result] = await pool.execute(
       `INSERT INTO task_comments (task_id, user_id, comment, file_path)
        VALUES (?, ?, ?, ?)`,
-      [id, req.userId, comment, file_path || null]
+      [id, userId, comment, file_path || null]
     );
 
     // Get created comment
@@ -1029,9 +1049,11 @@ const addComment = async (req, res) => {
     });
   } catch (error) {
     console.error('Add task comment error:', error);
+    console.error('Error details:', error.message);
     res.status(500).json({
       success: false,
-      error: 'Failed to add comment'
+      error: 'Failed to add comment',
+      details: error.message
     });
   }
 };
@@ -1074,7 +1096,27 @@ const uploadFile = async (req, res) => {
   try {
     const { id } = req.params;
     const file = req.file;
-    const { description } = req.body;
+    const { description, user_id, company_id } = req.body;
+
+    // Get company_id from query, body, or req.companyId
+    const companyId = req.query.company_id || company_id || req.companyId || req.user?.company_id;
+    
+    // Get user_id from body, req.userId, or req.user.id
+    const userId = user_id || req.userId || req.user?.id;
+
+    if (!companyId) {
+      return res.status(400).json({
+        success: false,
+        error: 'company_id is required'
+      });
+    }
+
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: 'user_id is required'
+      });
+    }
 
     if (!file) {
       return res.status(400).json({
@@ -1086,7 +1128,7 @@ const uploadFile = async (req, res) => {
     // Check if task exists
     const [tasks] = await pool.execute(
       `SELECT id FROM tasks WHERE id = ? AND company_id = ? AND is_deleted = 0`,
-      [id, req.companyId]
+      [id, companyId]
     );
 
     if (tasks.length === 0) {
@@ -1106,7 +1148,7 @@ const uploadFile = async (req, res) => {
     const [result] = await pool.execute(
       `INSERT INTO task_files (task_id, user_id, file_path, file_name, file_size, file_type, description)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [id, req.userId, filePath, fileName, fileSize, fileType, description || null]
+      [id, userId, filePath, fileName, fileSize, fileType, description || null]
     );
 
     // Get created file
@@ -1300,6 +1342,471 @@ const sendEmail = async (req, res) => {
   }
 };
 
+/**
+ * Get task notes
+ * GET /api/v1/tasks/:id/notes
+ */
+const getNotes = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const [notes] = await pool.execute(
+      `SELECT tn.*, u.name as user_name, u.email as user_email, u.avatar
+       FROM task_notes tn
+       JOIN users u ON tn.user_id = u.id
+       WHERE tn.task_id = ? AND tn.is_deleted = 0
+       ORDER BY tn.created_at DESC`,
+      [id]
+    );
+
+    res.json({
+      success: true,
+      data: notes
+    });
+  } catch (error) {
+    console.error('Get task notes error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch notes'
+    });
+  }
+};
+
+/**
+ * Add note to task
+ * POST /api/v1/tasks/:id/notes
+ */
+const addNote = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { note, user_id, company_id } = req.body;
+
+    // Get company_id from query, body, or req.companyId
+    const companyId = req.query.company_id || company_id || req.companyId || req.user?.company_id;
+    
+    // Get user_id from body, req.userId, or req.user.id
+    const userId = user_id || req.userId || req.user?.id;
+
+    if (!companyId) {
+      return res.status(400).json({
+        success: false,
+        error: 'company_id is required'
+      });
+    }
+
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: 'user_id is required'
+      });
+    }
+
+    // Check if task exists
+    const [tasks] = await pool.execute(
+      `SELECT id FROM tasks WHERE id = ? AND company_id = ? AND is_deleted = 0`,
+      [id, companyId]
+    );
+
+    if (tasks.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Task not found'
+      });
+    }
+
+    if (!note || !note.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Note is required'
+      });
+    }
+
+    // Insert note
+    const [result] = await pool.execute(
+      `INSERT INTO task_notes (task_id, user_id, note)
+       VALUES (?, ?, ?)`,
+      [id, userId, note.trim()]
+    );
+
+    // Get created note
+    const [notes] = await pool.execute(
+      `SELECT tn.*, u.name as user_name, u.email as user_email, u.avatar
+       FROM task_notes tn
+       JOIN users u ON tn.user_id = u.id
+       WHERE tn.id = ?`,
+      [result.insertId]
+    );
+
+    res.status(201).json({
+      success: true,
+      data: notes[0],
+      message: 'Note added successfully'
+    });
+  } catch (error) {
+    console.error('Add task note error:', error);
+    console.error('Error details:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to add note',
+      details: error.message
+    });
+  }
+};
+
+/**
+ * Update task note
+ * PUT /api/v1/tasks/:id/notes/:noteId
+ */
+const updateNote = async (req, res) => {
+  try {
+    const { id, noteId } = req.params;
+    const { note, user_id, company_id } = req.body;
+
+    // Get company_id from query, body, or req.companyId
+    const companyId = req.query.company_id || company_id || req.companyId || req.user?.company_id;
+    
+    // Get user_id from body, req.userId, or req.user.id
+    const userId = user_id || req.userId || req.user?.id;
+
+    if (!note || !note.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Note is required'
+      });
+    }
+
+    // Check if note exists and belongs to user
+    const [notes] = await pool.execute(
+      `SELECT tn.* FROM task_notes tn
+       JOIN tasks t ON tn.task_id = t.id
+       WHERE tn.id = ? AND tn.task_id = ? AND t.company_id = ? AND tn.is_deleted = 0`,
+      [noteId, id, companyId]
+    );
+
+    if (notes.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Note not found'
+      });
+    }
+
+    // Update note
+    await pool.execute(
+      `UPDATE task_notes SET note = ?, updated_at = NOW() WHERE id = ?`,
+      [note.trim(), noteId]
+    );
+
+    // Get updated note
+    const [updatedNotes] = await pool.execute(
+      `SELECT tn.*, u.name as user_name, u.email as user_email, u.avatar
+       FROM task_notes tn
+       JOIN users u ON tn.user_id = u.id
+       WHERE tn.id = ?`,
+      [noteId]
+    );
+
+    res.json({
+      success: true,
+      data: updatedNotes[0],
+      message: 'Note updated successfully'
+    });
+  } catch (error) {
+    console.error('Update task note error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update note',
+      details: error.message
+    });
+  }
+};
+
+/**
+ * Delete task note
+ * DELETE /api/v1/tasks/:id/notes/:noteId
+ */
+const deleteNote = async (req, res) => {
+  try {
+    const { id, noteId } = req.params;
+    const companyId = req.query.company_id || req.body.company_id || req.companyId || req.user?.company_id;
+
+    // Check if note exists
+    const [notes] = await pool.execute(
+      `SELECT tn.* FROM task_notes tn
+       JOIN tasks t ON tn.task_id = t.id
+       WHERE tn.id = ? AND tn.task_id = ? AND t.company_id = ? AND tn.is_deleted = 0`,
+      [noteId, id, companyId]
+    );
+
+    if (notes.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Note not found'
+      });
+    }
+
+    // Soft delete note
+    await pool.execute(
+      `UPDATE task_notes SET is_deleted = 1, updated_at = NOW() WHERE id = ?`,
+      [noteId]
+    );
+
+    res.json({
+      success: true,
+      message: 'Note deleted successfully'
+    });
+  } catch (error) {
+    console.error('Delete task note error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to delete note',
+      details: error.message
+    });
+  }
+};
+
+/**
+ * Get task subtasks
+ * GET /api/v1/tasks/:id/subtasks
+ */
+const getSubtasks = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const companyId = req.query.company_id || req.body.company_id || req.companyId;
+
+    const [subtasks] = await pool.execute(
+      `SELECT ts.*, u.name as assigned_to_name, u.email as assigned_to_email
+       FROM task_subtasks ts
+       LEFT JOIN users u ON ts.assign_to = u.id
+       WHERE ts.task_id = ? AND ts.is_deleted = 0
+       ORDER BY ts.created_at DESC`,
+      [id]
+    );
+
+    res.json({
+      success: true,
+      data: subtasks
+    });
+  } catch (error) {
+    console.error('Get task subtasks error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch subtasks'
+    });
+  }
+};
+
+/**
+ * Add subtask to task
+ * POST /api/v1/tasks/:id/subtasks
+ */
+const addSubtask = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { title, description, start_date, due_date, deadline, assign_to, status, priority, user_id, company_id } = req.body;
+
+    // Get company_id from query, body, or req.companyId
+    const companyId = req.query.company_id || company_id || req.companyId || req.user?.company_id;
+    
+    // Get user_id from body, req.userId, or req.user.id
+    const userId = user_id || req.userId || req.user?.id;
+
+    if (!companyId) {
+      return res.status(400).json({
+        success: false,
+        error: 'company_id is required'
+      });
+    }
+
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: 'user_id is required'
+      });
+    }
+
+    // Check if task exists
+    const [tasks] = await pool.execute(
+      `SELECT id FROM tasks WHERE id = ? AND company_id = ? AND is_deleted = 0`,
+      [id, companyId]
+    );
+
+    if (tasks.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Task not found'
+      });
+    }
+
+    if (!title || !title.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Title is required'
+      });
+    }
+
+    // Insert subtask
+    const [result] = await pool.execute(
+      `INSERT INTO task_subtasks (task_id, title, description, start_date, due_date, deadline, assign_to, status, priority, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        title.trim(),
+        description || null,
+        start_date || null,
+        due_date || null,
+        deadline || due_date || null,
+        assign_to || null,
+        status || 'Incomplete',
+        priority || 'Medium',
+        userId
+      ]
+    );
+
+    // Get created subtask
+    const [subtasks] = await pool.execute(
+      `SELECT ts.*, u.name as assigned_to_name, u.email as assigned_to_email
+       FROM task_subtasks ts
+       LEFT JOIN users u ON ts.assign_to = u.id
+       WHERE ts.id = ?`,
+      [result.insertId]
+    );
+
+    res.status(201).json({
+      success: true,
+      data: subtasks[0],
+      message: 'Subtask added successfully'
+    });
+  } catch (error) {
+    console.error('Add task subtask error:', error);
+    console.error('Error details:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to add subtask',
+      details: error.message
+    });
+  }
+};
+
+/**
+ * Update task subtask
+ * PUT /api/v1/tasks/:id/subtasks/:subtaskId
+ */
+const updateSubtask = async (req, res) => {
+  try {
+    const { id, subtaskId } = req.params;
+    const { title, description, start_date, due_date, deadline, assign_to, status, priority, company_id } = req.body;
+
+    const companyId = req.query.company_id || company_id || req.companyId || req.user?.company_id;
+
+    if (!title || !title.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Title is required'
+      });
+    }
+
+    // Check if subtask exists
+    const [subtasks] = await pool.execute(
+      `SELECT ts.* FROM task_subtasks ts
+       JOIN tasks t ON ts.task_id = t.id
+       WHERE ts.id = ? AND ts.task_id = ? AND t.company_id = ? AND ts.is_deleted = 0`,
+      [subtaskId, id, companyId]
+    );
+
+    if (subtasks.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Subtask not found'
+      });
+    }
+
+    // Update subtask
+    await pool.execute(
+      `UPDATE task_subtasks 
+       SET title = ?, description = ?, start_date = ?, due_date = ?, deadline = ?, 
+           assign_to = ?, status = ?, priority = ?, updated_at = NOW()
+       WHERE id = ?`,
+      [
+        title.trim(),
+        description || null,
+        start_date || null,
+        due_date || null,
+        deadline || due_date || null,
+        assign_to || null,
+        status || 'Incomplete',
+        priority || 'Medium',
+        subtaskId
+      ]
+    );
+
+    // Get updated subtask
+    const [updatedSubtasks] = await pool.execute(
+      `SELECT ts.*, u.name as assigned_to_name, u.email as assigned_to_email
+       FROM task_subtasks ts
+       LEFT JOIN users u ON ts.assign_to = u.id
+       WHERE ts.id = ?`,
+      [subtaskId]
+    );
+
+    res.json({
+      success: true,
+      data: updatedSubtasks[0],
+      message: 'Subtask updated successfully'
+    });
+  } catch (error) {
+    console.error('Update task subtask error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update subtask',
+      details: error.message
+    });
+  }
+};
+
+/**
+ * Delete task subtask
+ * DELETE /api/v1/tasks/:id/subtasks/:subtaskId
+ */
+const deleteSubtask = async (req, res) => {
+  try {
+    const { id, subtaskId } = req.params;
+    const companyId = req.query.company_id || req.body.company_id || req.companyId || req.user?.company_id;
+
+    // Check if subtask exists
+    const [subtasks] = await pool.execute(
+      `SELECT ts.* FROM task_subtasks ts
+       JOIN tasks t ON ts.task_id = t.id
+       WHERE ts.id = ? AND ts.task_id = ? AND t.company_id = ? AND ts.is_deleted = 0`,
+      [subtaskId, id, companyId]
+    );
+
+    if (subtasks.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Subtask not found'
+      });
+    }
+
+    // Soft delete subtask
+    await pool.execute(
+      `UPDATE task_subtasks SET is_deleted = 1, updated_at = NOW() WHERE id = ?`,
+      [subtaskId]
+    );
+
+    res.json({
+      success: true,
+      message: 'Subtask deleted successfully'
+    });
+  } catch (error) {
+    console.error('Delete task subtask error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to delete subtask',
+      details: error.message
+    });
+  }
+};
+
 module.exports = {
   getAll,
   getById,
@@ -1310,6 +1817,14 @@ module.exports = {
   getComments,
   uploadFile,
   getFiles,
-  sendEmail
+  sendEmail,
+  getNotes,
+  addNote,
+  updateNote,
+  deleteNote,
+  getSubtasks,
+  addSubtask,
+  updateSubtask,
+  deleteSubtask
 };
 

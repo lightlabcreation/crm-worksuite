@@ -1663,12 +1663,13 @@ const acceptCompanyRequest = async (req, res) => {
 
     const request = requests[0];
 
-    if (request.request_type !== 'Company Request') {
-      return res.status(400).json({
-        success: false,
-        error: 'This endpoint is only for Company Request type'
-      });
-    }
+    // IMPORTANT: Accept ANY request type (Payment, Service, Support, Company Request, etc.)
+    // No restriction on request_type - we create company for any type if company_name exists
+    console.log('Accepting request:', {
+      id: request.id,
+      request_type: request.request_type,
+      company_name: request.company_name
+    });
 
     if (request.status === 'Approved' || request.status === 'Completed') {
       return res.status(400).json({
@@ -1677,7 +1678,32 @@ const acceptCompanyRequest = async (req, res) => {
       });
     }
 
-    // Create company
+    // Check if company_name exists
+    if (!request.company_name || request.company_name.trim() === '') {
+      return res.status(400).json({
+        success: false,
+        error: 'Company name is required to create company'
+      });
+    }
+
+    // Convert package_id to integer if it exists
+    const packageId = request.package_id ? parseInt(request.package_id) : null;
+    
+    // Verify package exists if package_id is provided
+    if (packageId) {
+      const [packageCheck] = await pool.execute(
+        'SELECT id FROM company_packages WHERE id = ? AND is_deleted = 0',
+        [packageId]
+      );
+      if (packageCheck.length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'Selected package not found'
+        });
+      }
+    }
+
+    // Create company with package_id
     const [companyResult] = await pool.execute(
       `INSERT INTO companies 
         (name, industry, website, address, notes, currency, timezone, package_id, created_at, updated_at)
@@ -1690,11 +1716,55 @@ const acceptCompanyRequest = async (req, res) => {
         request.description || null, // notes
         'USD', // currency
         'UTC', // timezone
-        request.package_id || null // package_id
+        packageId // package_id (converted to integer or null)
       ]
     );
 
     const companyId = companyResult.insertId;
+
+    // Create admin user automatically for the company
+    let adminUser = null;
+    if (request.contact_email && request.contact_name) {
+      try {
+        // Generate default password (can be changed later)
+        const defaultPassword = 'Admin@123'; // Default password
+        const bcrypt = require('bcryptjs');
+        const hashedPassword = await bcrypt.hash(defaultPassword, 10);
+
+        // Check if user with this email already exists
+        const [existingUsers] = await pool.execute(
+          `SELECT id FROM users WHERE email = ? AND is_deleted = 0`,
+          [request.contact_email.toLowerCase()]
+        );
+
+        if (existingUsers.length === 0) {
+          // Create admin user
+          const [userResult] = await pool.execute(
+            `INSERT INTO users (company_id, name, email, password, role, status, phone, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+            [
+              companyId,
+              request.contact_name,
+              request.contact_email.toLowerCase(),
+              hashedPassword,
+              'ADMIN',
+              'Active',
+              request.contact_phone || null
+            ]
+          );
+
+          // Get created admin user
+          const [newUser] = await pool.execute(
+            'SELECT id, name, email, role, status FROM users WHERE id = ?',
+            [userResult.insertId]
+          );
+          adminUser = newUser[0];
+        }
+      } catch (userError) {
+        console.error('Error creating admin user:', userError);
+        // Continue even if user creation fails - company is already created
+      }
+    }
 
     // Update request status and link to company
     await pool.execute(
@@ -1704,9 +1774,12 @@ const acceptCompanyRequest = async (req, res) => {
       [companyId, id]
     );
 
-    // Get created company
+    // Get created company with package details
     const [newCompany] = await pool.execute(
-      'SELECT * FROM companies WHERE id = ?',
+      `SELECT c.*, cp.package_name, cp.price as package_price, cp.billing_cycle as package_billing_cycle
+       FROM companies c
+       LEFT JOIN company_packages cp ON c.package_id = cp.id
+       WHERE c.id = ?`,
       [companyId]
     );
 
@@ -1714,9 +1787,18 @@ const acceptCompanyRequest = async (req, res) => {
       success: true,
       data: {
         company: newCompany[0],
+        admin_user: adminUser,
+        package: newCompany[0].package_id ? {
+          id: newCompany[0].package_id,
+          name: newCompany[0].package_name,
+          price: newCompany[0].package_price,
+          billing_cycle: newCompany[0].package_billing_cycle
+        } : null,
         request: { ...request, status: 'Approved', company_id: companyId }
       },
-      message: 'Company request accepted and company created successfully'
+      message: adminUser 
+        ? `Company "${request.company_name}" created successfully with ${newCompany[0].package_name || 'no'} plan. Admin user created.`
+        : `Company "${request.company_name}" created successfully with ${newCompany[0].package_name || 'no'} plan.`
     });
   } catch (error) {
     console.error('Accept company request error:', error);

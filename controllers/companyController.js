@@ -103,22 +103,39 @@ const getById = async (req, res) => {
     
     const { id } = req.params;
 
-    const [companies] = await pool.execute(
-      `SELECT * FROM companies 
-       WHERE id = ? AND is_deleted = 0`,
+    // First check if company exists (including deleted ones)
+    const [allCompanies] = await pool.execute(
+      `SELECT * FROM companies WHERE id = ?`,
       [id]
     );
 
-    if (companies.length === 0) {
+    if (allCompanies.length === 0) {
+      // Check if any companies exist at all
+      const [anyCompanies] = await pool.execute(
+        `SELECT id, name FROM companies WHERE is_deleted = 0 ORDER BY id LIMIT 5`
+      );
+      
       return res.status(404).json({
         success: false,
-        error: 'Company not found'
+        error: `Company with ID ${id} not found`,
+        hint: anyCompanies.length > 0 
+          ? `Available companies: ${anyCompanies.map(c => `ID ${c.id} - ${c.name}`).join(', ')}`
+          : 'No companies found in database. Please create a company first.'
+      });
+    }
+
+    // Check if company is deleted
+    if (allCompanies[0].is_deleted === 1) {
+      return res.status(404).json({
+        success: false,
+        error: 'Company not found (deleted)',
+        hint: 'This company has been deleted. Contact administrator to restore it.'
       });
     }
 
     res.json({
       success: true,
-      data: companies[0]
+      data: allCompanies[0]
     });
   } catch (error) {
     console.error('Get company by ID error:', error);
