@@ -1397,6 +1397,218 @@ const getAllGroups = async (req, res) => {
   }
 };
 
+/**
+ * Get client statement (invoices and payments with running balance)
+ * GET /api/v1/clients/:id/statement
+ */
+const getStatement = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { start_date, end_date } = req.query;
+    
+    const companyId = req.query.company_id || req.body.company_id || req.companyId;
+    
+    if (!companyId) {
+      return res.status(400).json({
+        success: false,
+        error: 'company_id is required'
+      });
+    }
+
+    // Verify client exists
+    const [clients] = await pool.execute(
+      `SELECT id, company_name FROM clients WHERE id = ? AND company_id = ? AND is_deleted = 0`,
+      [id, companyId]
+    );
+
+    if (clients.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Client not found'
+      });
+    }
+
+    // Build date filter
+    let dateFilter = '';
+    const dateParams = [];
+    if (start_date) {
+      dateFilter += ' AND DATE(i.invoice_date) >= ?';
+      dateParams.push(start_date);
+    }
+    if (end_date) {
+      dateFilter += ' AND DATE(i.invoice_date) <= ?';
+      dateParams.push(end_date);
+    }
+
+    // Get all invoices for this client
+    const [invoices] = await pool.execute(
+      `SELECT 
+        i.id,
+        i.invoice_number,
+        i.invoice_date,
+        i.due_date,
+        i.total,
+        i.paid,
+        i.unpaid,
+        i.status,
+        i.currency,
+        i.created_at,
+        'invoice' as type
+      FROM invoices i
+      WHERE i.client_id = ? AND i.company_id = ? AND i.is_deleted = 0 ${dateFilter}
+      ORDER BY i.invoice_date ASC, i.created_at ASC`,
+      [id, companyId, ...dateParams]
+    );
+
+    // Get all payments for invoices of this client
+    let paymentDateFilter = '';
+    const paymentDateParams = [];
+    if (start_date) {
+      paymentDateFilter += ' AND DATE(p.paid_on) >= ?';
+      paymentDateParams.push(start_date);
+    }
+    if (end_date) {
+      paymentDateFilter += ' AND DATE(p.paid_on) <= ?';
+      paymentDateParams.push(end_date);
+    }
+
+    const [payments] = await pool.execute(
+      `SELECT 
+        p.id,
+        p.invoice_id,
+        i.invoice_number,
+        p.paid_on as transaction_date,
+        p.amount,
+        p.currency,
+        p.payment_gateway,
+        p.offline_payment_method,
+        p.remark,
+        p.created_at,
+        'payment' as type
+      FROM payments p
+      INNER JOIN invoices i ON p.invoice_id = i.id
+      WHERE i.client_id = ? AND p.company_id = ? AND p.is_deleted = 0 ${paymentDateFilter}
+      ORDER BY p.paid_on ASC, p.created_at ASC`,
+      [id, companyId, ...paymentDateParams]
+    );
+
+    // Combine invoices and payments into a single array
+    const statementItems = [];
+
+    // Add invoices
+    invoices.forEach(invoice => {
+      statementItems.push({
+        id: invoice.id,
+        type: 'invoice',
+        date: invoice.invoice_date,
+        reference: invoice.invoice_number,
+        description: `Invoice ${invoice.invoice_number}`,
+        debit: parseFloat(invoice.total || 0),
+        credit: 0,
+        balance: 0, // Will be calculated
+        invoice_id: invoice.id,
+        invoice_number: invoice.invoice_number,
+        due_date: invoice.due_date,
+        status: invoice.status,
+        paid: parseFloat(invoice.paid || 0),
+        unpaid: parseFloat(invoice.unpaid || 0),
+        currency: invoice.currency || 'USD',
+        created_at: invoice.created_at
+      });
+    });
+
+    // Add payments
+    payments.forEach(payment => {
+      statementItems.push({
+        id: payment.id,
+        type: 'payment',
+        date: payment.transaction_date,
+        reference: payment.invoice_number || `PAY-${payment.id}`,
+        description: `Payment for Invoice ${payment.invoice_number || payment.invoice_id}`,
+        debit: 0,
+        credit: parseFloat(payment.amount || 0),
+        balance: 0, // Will be calculated
+        payment_id: payment.id,
+        invoice_id: payment.invoice_id,
+        invoice_number: payment.invoice_number,
+        payment_method: payment.payment_gateway || payment.offline_payment_method,
+        remark: payment.remark,
+        currency: payment.currency || 'USD',
+        created_at: payment.created_at
+      });
+    });
+
+    // Sort by date (chronological order)
+    statementItems.sort((a, b) => {
+      const dateA = new Date(a.date || a.created_at);
+      const dateB = new Date(b.date || b.created_at);
+      if (dateA.getTime() === dateB.getTime()) {
+        // If same date, invoices come before payments
+        if (a.type === 'invoice' && b.type === 'payment') return -1;
+        if (a.type === 'payment' && b.type === 'invoice') return 1;
+        return new Date(a.created_at) - new Date(b.created_at);
+      }
+      return dateA - dateB;
+    });
+
+    // Calculate running balance
+    let runningBalance = 0;
+    statementItems.forEach(item => {
+      runningBalance += item.debit - item.credit;
+      item.balance = runningBalance;
+    });
+
+    // Calculate summary
+    const totalInvoiced = invoices.reduce((sum, inv) => sum + parseFloat(inv.total || 0), 0);
+    const totalPaid = payments.reduce((sum, pay) => sum + parseFloat(pay.amount || 0), 0);
+    const outstandingBalance = totalInvoiced - totalPaid;
+    const currentBalance = runningBalance; // Final balance
+
+    // Get opening balance (balance before start_date if date filter is applied)
+    let openingBalance = 0;
+    if (start_date) {
+      const [openingInvoices] = await pool.execute(
+        `SELECT COALESCE(SUM(total), 0) as total
+         FROM invoices
+         WHERE client_id = ? AND company_id = ? AND is_deleted = 0 AND DATE(invoice_date) < ?`,
+        [id, companyId, start_date]
+      );
+      const [openingPayments] = await pool.execute(
+        `SELECT COALESCE(SUM(p.amount), 0) as total
+         FROM payments p
+         INNER JOIN invoices i ON p.invoice_id = i.id
+         WHERE i.client_id = ? AND p.company_id = ? AND p.is_deleted = 0 AND DATE(p.paid_on) < ?`,
+        [id, companyId, start_date]
+      );
+      openingBalance = parseFloat(openingInvoices[0]?.total || 0) - parseFloat(openingPayments[0]?.total || 0);
+    }
+
+    res.json({
+      success: true,
+      data: {
+        client_id: parseInt(id),
+        client_name: clients[0].company_name,
+        opening_balance: openingBalance,
+        closing_balance: currentBalance,
+        total_invoiced: totalInvoiced,
+        total_paid: totalPaid,
+        outstanding_balance: outstandingBalance,
+        currency: invoices[0]?.currency || payments[0]?.currency || 'USD',
+        start_date: start_date || null,
+        end_date: end_date || null,
+        items: statementItems
+      }
+    });
+  } catch (error) {
+    console.error('Get client statement error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch client statement',
+      details: error.message
+    });
+  }
+};
+
 module.exports = {
   getAll,
   getById,
@@ -1409,6 +1621,7 @@ module.exports = {
   updateContact,
   deleteContact,
   getOverview,
+  getStatement,
   // Label management
   getAllLabels,
   createLabel,

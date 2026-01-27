@@ -3,6 +3,7 @@
 // =====================================================
 
 const pool = require('../config/db');
+const { initializeDefaultRoles } = require('../helpers/roleInitializer');
 
 /**
  * Ensure companies table has all required columns
@@ -182,6 +183,15 @@ const create = async (req, res) => {
       `SELECT * FROM companies WHERE id = ?`,
       [result.insertId]
     );
+
+    // Initialize default roles for the new company
+    try {
+      await initializeDefaultRoles(result.insertId);
+      console.log(`Default roles initialized for company ${result.insertId}`);
+    } catch (roleError) {
+      console.error('Error initializing default roles:', roleError);
+      // Don't fail company creation if role initialization fails
+    }
 
     res.status(201).json({
       success: true,

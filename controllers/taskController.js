@@ -1065,15 +1065,26 @@ const addComment = async (req, res) => {
 const getComments = async (req, res) => {
   try {
     const { id } = req.params;
+    const companyId = req.query.company_id || req.body.company_id;
 
-    const [comments] = await pool.execute(
-      `SELECT tc.*, u.name as user_name, u.email as user_email, u.avatar
-       FROM task_comments tc
-       JOIN users u ON tc.user_id = u.id
-       WHERE tc.task_id = ? AND tc.is_deleted = 0
-       ORDER BY tc.created_at ASC`,
-      [id]
-    );
+    // Build query with optional company_id filter
+    let query = `
+      SELECT tc.*, u.name as user_name, u.email as user_email, u.avatar
+      FROM task_comments tc
+      JOIN users u ON tc.user_id = u.id
+      JOIN tasks t ON tc.task_id = t.id
+      WHERE tc.task_id = ? AND tc.is_deleted = 0
+    `;
+    const params = [id];
+
+    if (companyId) {
+      query += ' AND t.company_id = ?';
+      params.push(companyId);
+    }
+
+    query += ' ORDER BY tc.created_at ASC';
+
+    const [comments] = await pool.execute(query, params);
 
     res.json({
       success: true,

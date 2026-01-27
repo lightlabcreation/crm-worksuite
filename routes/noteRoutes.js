@@ -13,8 +13,8 @@ router.get('/:id', noteController.getById);
 // Create note
 router.post('/', uploadMultiple('files'), noteController.create);
 
-// Update note
-router.put('/:id', noteController.update);
+// Update note (with file upload support)
+router.put('/:id', uploadMultiple('files'), noteController.update);
 
 // Delete note
 router.delete('/:id', noteController.delete);

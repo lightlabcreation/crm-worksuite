@@ -21,6 +21,7 @@ const proposalRoutes = require('./routes/proposalRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 const expenseRoutes = require('./routes/expenseRoutes');
 const contractRoutes = require('./routes/contractRoutes');
+const contractTemplateRoutes = require('./routes/contractTemplateRoutes');
 const subscriptionRoutes = require('./routes/subscriptionRoutes');
 const employeeRoutes = require('./routes/employeeRoutes');
 const attendanceRoutes = require('./routes/attendanceRoutes');
@@ -55,6 +56,8 @@ const noteRoutes = require('./routes/noteRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const itemRoutes = require('./routes/itemRoutes');
 const moduleSettingsRoutes = require('./routes/moduleSettingsRoutes');
+const activityRoutes = require('./routes/activityRoutes');
+const taskLabelRoutes = require('./routes/taskLabelRoutes');
 
 
 const app = express();
@@ -83,7 +86,6 @@ app.use(
     credentials: true
   })
 );
-
 // Handle preflight requests
 app.options('*', cors());
 
@@ -134,6 +136,7 @@ app.use(`${apiBase}/proposals`, proposalRoutes);
 app.use(`${apiBase}/payments`, paymentRoutes);
 app.use(`${apiBase}/expenses`, expenseRoutes);
 app.use(`${apiBase}/contracts`, contractRoutes);
+app.use(`${apiBase}/contract-templates`, contractTemplateRoutes);
 app.use(`${apiBase}/subscriptions`, subscriptionRoutes);
 app.use(`${apiBase}/employees`, employeeRoutes);
 app.use(`${apiBase}/attendance`, attendanceRoutes);
@@ -170,6 +173,8 @@ app.use(`${apiBase}/orders`, orderRoutes);
 app.use(`${apiBase}/items`, itemRoutes);
 app.use(`${apiBase}/pwa`, pwaRoutes);
 app.use(`${apiBase}/module-settings`, moduleSettingsRoutes);
+app.use(`${apiBase}/activities`, activityRoutes);
+app.use(`${apiBase}/task-labels`, taskLabelRoutes);
 
 // Notification Settings routes
 const notificationSettingsRoutes = require('./routes/notificationSettingsRoutes');

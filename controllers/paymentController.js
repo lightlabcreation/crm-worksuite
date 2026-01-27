@@ -116,7 +116,7 @@ const getById = async (req, res) => {
 const create = async (req, res) => {
   try {
     const {
-      company_id, project_id, invoice_id, paid_on, amount, currency, exchange_rate,
+      company_id, project_id, invoice_id, paid_on, payment_date, amount, currency, exchange_rate,
       transaction_id, payment_gateway, offline_payment_method, payment_method,
       bank_account, receipt_path, remark, note, order_number, client_id
     } = req.body;
@@ -147,7 +147,7 @@ const create = async (req, res) => {
         company_id ?? null,
         project_id ?? null,
         invoice_id ?? null,
-        paid_on || new Date().toISOString().split('T')[0],
+        paid_on || payment_date || new Date().toISOString().split('T')[0],
         amount ? parseFloat(amount) : null,
         currency || 'USD',
         exchange_rate ?? 1.0,

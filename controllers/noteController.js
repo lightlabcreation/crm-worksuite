@@ -202,20 +202,73 @@ const getById = async (req, res) => {
  */
 const create = async (req, res) => {
   try {
-    const {
-      company_id,
-      user_id,
-      client_id,
-      lead_id,
-      project_id,
-      title,
-      content
-    } = req.body;
+    // Handle both JSON and FormData requests
+    const company_id = req.body.company_id || req.query.company_id;
+    const user_id = req.body.user_id || req.query.user_id;
+    const client_id = req.body.client_id || null;
+    const lead_id = req.body.lead_id || null;
+    const project_id = req.body.project_id || null;
+    const title = req.body.title || null;
+    const content = req.body.content || null;
+
+    // Validate required fields
+    if (!company_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'company_id is required'
+      });
+    }
+
+    // Handle content - can be string or object (JSON stringified)
+    let contentValue = content;
+    if (typeof content === 'object') {
+      contentValue = JSON.stringify(content);
+    } else if (typeof content === 'string') {
+      // Try to parse if it's a JSON string, otherwise use as-is
+      try {
+        const parsed = JSON.parse(content);
+        if (typeof parsed === 'object') {
+          contentValue = JSON.stringify(parsed);
+        } else {
+          contentValue = content.trim();
+        }
+      } catch (e) {
+        contentValue = content.trim();
+      }
+    }
+
+    if (!contentValue || (typeof contentValue === 'string' && !contentValue.trim())) {
+      return res.status(400).json({
+        success: false,
+        error: 'Note content is required'
+      });
+    }
+
+    // Ensure content is a string
+    const finalContent = typeof contentValue === 'string' ? contentValue.trim() : String(contentValue).trim();
+
+    // Provide default title if not provided (title column is NOT NULL in database)
+    // Generate title from content if not provided
+    let finalTitle = title;
+    if (!finalTitle || !finalTitle.trim()) {
+      // Extract first few words from content as title
+      const contentText = finalContent.replace(/<[^>]*>/g, '').trim(); // Remove HTML tags
+      if (contentText.length > 0) {
+        const words = contentText.split(/\s+/).slice(0, 8); // First 8 words
+        finalTitle = words.join(' ');
+        if (contentText.length > finalTitle.length) {
+          finalTitle += '...';
+        }
+      } else {
+        finalTitle = 'Note'; // Fallback default
+      }
+    }
+    finalTitle = finalTitle.trim().substring(0, 255); // Ensure it fits in VARCHAR(255)
 
     const [result] = await pool.execute(
       `INSERT INTO notes (company_id, user_id, client_id, lead_id, project_id, title, content)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [company_id ?? null, user_id || null, client_id || null, lead_id || null, project_id || null, title || null, content || null]
+      [company_id, user_id || null, client_id || null, lead_id || null, project_id || null, finalTitle, finalContent]
     );
 
     const noteId = result.insertId;
@@ -252,9 +305,12 @@ const create = async (req, res) => {
     });
   } catch (error) {
     console.error('Create note error:', error);
+    console.error('Error details:', error.message);
+    console.error('Stack trace:', error.stack);
     res.status(500).json({
       success: false,
-      error: 'Failed to create note'
+      error: 'Failed to create note',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
@@ -289,37 +345,107 @@ const update = async (req, res) => {
       });
     }
 
+    // Handle content - can be string or object (JSON stringified)
+    let contentValue = content;
+    if (content !== undefined) {
+      if (typeof content === 'object') {
+        contentValue = JSON.stringify(content);
+      } else if (typeof content === 'string') {
+        // Try to parse if it's a JSON string, otherwise use as-is
+        try {
+          const parsed = JSON.parse(content);
+          if (typeof parsed === 'object') {
+            contentValue = JSON.stringify(parsed);
+          } else {
+            contentValue = content.trim();
+          }
+        } catch (e) {
+          contentValue = content.trim();
+        }
+      }
+    }
+
+    // Handle title - generate from content if not provided
+    let finalTitle = title;
+    if (title !== undefined && (!title || !title.trim())) {
+      if (contentValue) {
+        // Extract first few words from content as title
+        const contentText = contentValue.replace(/<[^>]*>/g, '').trim(); // Remove HTML tags
+        if (contentText.length > 0) {
+          const words = contentText.split(/\s+/).slice(0, 8); // First 8 words
+          finalTitle = words.join(' ');
+          if (contentText.length > finalTitle.length) {
+            finalTitle += '...';
+          }
+        } else {
+          finalTitle = 'Note'; // Fallback default
+        }
+      }
+    }
+    if (finalTitle) {
+      finalTitle = finalTitle.trim().substring(0, 255); // Ensure it fits in VARCHAR(255)
+    }
+
     const updates = [];
     const params = [];
 
     if (title !== undefined) {
       updates.push('title = ?');
-      params.push(title);
+      params.push(finalTitle || title);
     }
     if (content !== undefined) {
       updates.push('content = ?');
-      params.push(content);
+      params.push(contentValue);
     }
 
-    if (updates.length === 0) {
+    if (updates.length === 0 && (!req.files || req.files.length === 0)) {
       return res.status(400).json({
         success: false,
         error: 'No fields to update'
       });
     }
 
-    updates.push('updated_at = NOW()');
-    params.push(id);
+    if (updates.length > 0) {
+      updates.push('updated_at = NOW()');
+      params.push(id);
 
-    await pool.execute(
-      `UPDATE notes SET ${updates.join(', ')} WHERE id = ?`,
-      params
+      await pool.execute(
+        `UPDATE notes SET ${updates.join(', ')} WHERE id = ?`,
+        params
+      );
+    }
+
+    // Handle file uploads
+    const files = [];
+    if (req.files && req.files.length > 0) {
+      for (const file of req.files) {
+        const filePath = file.path.replace(/\\/g, '/'); // Normalize path
+        await pool.execute(
+          `INSERT INTO note_files (note_id, company_id, file_name, file_path, file_size, file_type)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [id, companyId, file.originalname, filePath, file.size, file.mimetype]
+        );
+        files.push({
+          file_name: file.originalname,
+          file_path: filePath,
+          file_size: file.size,
+          file_type: file.mimetype
+        });
+      }
+    }
+
+    // Get existing files
+    const [existingFiles] = await pool.execute(
+      'SELECT * FROM note_files WHERE note_id = ? AND company_id = ?',
+      [id, companyId]
     );
 
     const [updatedNote] = await pool.execute(
       'SELECT * FROM notes WHERE id = ?',
       [id]
     );
+
+    updatedNote[0].files = existingFiles || [];
 
     res.json({
       success: true,
@@ -328,9 +454,12 @@ const update = async (req, res) => {
     });
   } catch (error) {
     console.error('Update note error:', error);
+    console.error('Error details:', error.message);
+    console.error('Stack trace:', error.stack);
     res.status(500).json({
       success: false,
-      error: 'Failed to update note'
+      error: 'Failed to update note',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };

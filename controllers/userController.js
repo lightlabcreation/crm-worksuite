@@ -1,5 +1,6 @@
 const pool = require('../config/db');
 const bcrypt = require('bcryptjs');
+const { assignRoleToUser, getRoleIdByName } = require('../helpers/roleInitializer');
 
 const getAll = async (req, res) => {
   try {
@@ -49,12 +50,38 @@ const create = async (req, res) => {
       });
     }
 
+    const companyId = req.companyId || req.body.company_id || req.query.company_id;
+    
+    if (!companyId) {
+      return res.status(400).json({
+        success: false,
+        error: 'company_id is required'
+      });
+    }
+
     const hashedPassword = await bcrypt.hash(password, 10);
     const [result] = await pool.execute(
       `INSERT INTO users (company_id, name, email, password, role, status)
        VALUES (?, ?, ?, ?, ?, ?)`,
-      [req.companyId ?? null, name, email, hashedPassword, role, status || 'Active']
+      [companyId, name, email, hashedPassword, role, status || 'Active']
     );
+
+    // Assign role to user (if role_id is provided or find by role name)
+    try {
+      let roleId = req.body.role_id;
+      
+      if (!roleId) {
+        // Try to find role by name
+        roleId = await getRoleIdByName(companyId, role);
+      }
+      
+      if (roleId) {
+        await assignRoleToUser(result.insertId, roleId, companyId);
+      }
+    } catch (roleError) {
+      console.error('Error assigning role to user:', roleError);
+      // Don't fail user creation if role assignment fails
+    }
 
     // Get created user (without password)
     const [users] = await pool.execute(
