@@ -182,7 +182,7 @@ const getAll = async (req, res) => {
         [lead.id]
       );
       const leadLabels = labels.map(l => l.label);
-      
+
       const [services] = await pool.execute(
         `SELECT ls.item_id, i.title as item_name, i.rate as item_price
          FROM lead_services ls
@@ -195,7 +195,7 @@ const getAll = async (req, res) => {
         name: s.item_name || 'Unknown Item',
         price: s.item_price || 0
       }));
-      
+
       return sanitizeLead({ ...lead, labels: leadLabels, services: leadServices });
     }));
 
@@ -289,7 +289,7 @@ const create = async (req, res) => {
   try {
     console.log('=== CREATE LEAD REQUEST ===');
     console.log('Request body:', JSON.stringify(req.body, null, 2));
-    
+
     const {
       lead_type, company_name, person_name, email, phone,
       owner_id, status, source, address,
@@ -341,9 +341,9 @@ const create = async (req, res) => {
         companyId,
         lead_type || 'Organization',
         company_name ?? null,
-        person_name ?? null,
-        email ?? null,
-        phone ?? null,
+        person_name || '',
+        email || '',
+        phone || '',
         effectiveOwnerId,
         status || 'New',
         source ?? null,
@@ -376,7 +376,7 @@ const create = async (req, res) => {
     if (sanitizedServices && sanitizedServices.length > 0) {
       console.log('Inserting services:', sanitizedServices);
       const serviceValues = sanitizedServices.map(serviceId => [leadId, serviceId, companyId]);
-      
+
       try {
         await pool.query(
           `INSERT INTO lead_services (lead_id, item_id, company_id) VALUES ?`,
@@ -402,14 +402,14 @@ const create = async (req, res) => {
     );
 
     const createdLead = leads[0];
-    
+
     // Get labels
     const [labelRows] = await pool.execute(
       `SELECT label FROM lead_labels WHERE lead_id = ?`,
       [leadId]
     );
     createdLead.labels = labelRows.map(l => l.label);
-    
+
     // Get services with item details
     const [serviceRows] = await pool.execute(
       `SELECT ls.item_id, i.title as item_name, i.rate as item_price
@@ -493,6 +493,11 @@ const update = async (req, res) => {
         // Convert undefined to null for other fields
         if (fieldValue === undefined) {
           fieldValue = null;
+        }
+
+        // Protect NOT NULL fields
+        if (fieldValue === null && ['person_name', 'email', 'phone'].includes(field)) {
+          fieldValue = '';
         }
 
         updates.push(`${field} = ?`);
@@ -580,7 +585,7 @@ const update = async (req, res) => {
         [id]
       );
       updatedLead.labels = labels.map(l => l.label);
-      
+
       // Get services
       const [services] = await pool.execute(
         `SELECT ls.item_id, i.title as item_name, i.rate as item_price

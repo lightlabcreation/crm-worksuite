@@ -86,6 +86,7 @@ app.use(
     credentials: true
   })
 );
+
 // Handle preflight requests
 app.options('*', cors());
 

@@ -292,15 +292,27 @@ const addRole = async (req, res) => {
             [companyId, role_name.trim(), description || '', is_system_role ? 1 : 0]
         );
 
+        const roleId = result.insertId;
+
+        // Initialize default permissions for the new role
+        try {
+            const { initializeDefaultPermissions } = require('../helpers/roleInitializer');
+            await initializeDefaultPermissions(companyId, roleId, role_name.trim());
+            console.log(`✅ Default permissions initialized for role: ${role_name}`);
+        } catch (permError) {
+            console.error('⚠️ Error initializing default permissions (non-fatal):', permError);
+            // Don't fail role creation if permissions initialization fails
+        }
+
         const [newRole] = await pool.execute(
             'SELECT * FROM roles WHERE id = ?',
-            [result.insertId]
+            [roleId]
         );
 
         res.status(201).json({ 
             success: true, 
             data: newRole[0],
-            message: 'Role created successfully' 
+            message: 'Role created successfully with default permissions' 
         });
     } catch (error) {
         console.error('Add role error:', error);

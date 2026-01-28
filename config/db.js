@@ -499,6 +499,107 @@ const runAutoMigrations = async () => {
       }
     }
 
+    // Check if is_system_role column exists in roles table
+    const [rolesSystemRoleColumns] = await pool.execute(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'roles' AND COLUMN_NAME = 'is_system_role'`
+    );
+
+    if (rolesSystemRoleColumns.length === 0) {
+      console.log('📦 Running migration: Adding is_system_role to roles table...');
+      try {
+        await pool.execute('ALTER TABLE roles ADD COLUMN is_system_role TINYINT(1) DEFAULT 0 AFTER description');
+        // Update existing roles to set is_system_role = 0 (custom roles) by default
+        await pool.execute('UPDATE roles SET is_system_role = 0 WHERE is_system_role IS NULL');
+        console.log('✅ Migration completed: is_system_role column added to roles');
+      } catch (err) {
+        console.error('⚠️ Could not add is_system_role to roles:', err.message);
+      }
+    }
+
+    // Check if module_settings table exists and fix id column AUTO_INCREMENT
+    try {
+      const [moduleSettingsTable] = await pool.execute(
+        `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES 
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'module_settings'`
+      );
+
+      if (moduleSettingsTable.length > 0) {
+        // Check if id column has AUTO_INCREMENT
+        const [idColumn] = await pool.execute(
+          `SELECT COLUMN_NAME, EXTRA
+           FROM INFORMATION_SCHEMA.COLUMNS 
+           WHERE TABLE_SCHEMA = DATABASE() 
+           AND TABLE_NAME = 'module_settings' 
+           AND COLUMN_NAME = 'id'`
+        );
+
+        if (idColumn.length > 0 && !idColumn[0].EXTRA.includes('auto_increment')) {
+          console.log('📦 Running migration: Fixing module_settings.id AUTO_INCREMENT...');
+          try {
+            await pool.execute(`ALTER TABLE module_settings MODIFY id INT AUTO_INCREMENT`);
+            console.log('✅ Migration completed: module_settings.id now has AUTO_INCREMENT');
+          } catch (modifyErr) {
+            console.error('⚠️ Could not fix module_settings.id:', modifyErr.message);
+          }
+        }
+      }
+    } catch (moduleSettingsErr) {
+      console.log('⚠️ Could not check module_settings table:', moduleSettingsErr.message);
+    }
+
+    // Fix AUTO_INCREMENT for multiple tables that might have this issue
+    const tablesToFix = ['leads', 'contacts'];
+    
+    for (const tableName of tablesToFix) {
+      try {
+        const [tableExists] = await pool.execute(
+          `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES 
+           WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`,
+          [tableName]
+        );
+
+        if (tableExists.length > 0) {
+          // Try simple direct fix first (works even without INFORMATION_SCHEMA access)
+          try {
+            console.log(`📦 Running migration: Fixing ${tableName}.id AUTO_INCREMENT...`);
+            await pool.execute(`ALTER TABLE ${tableName} MODIFY id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY`);
+            console.log(`✅ Migration completed: ${tableName}.id now has AUTO_INCREMENT`);
+          } catch (directErr) {
+            // If direct fix fails, try without PRIMARY KEY (in case it already exists)
+            try {
+              console.log(`📦 Trying alternative method for ${tableName}.id...`);
+              await pool.execute(`ALTER TABLE ${tableName} MODIFY id INT UNSIGNED AUTO_INCREMENT`);
+              console.log(`✅ Migration completed (alternative): ${tableName}.id now has AUTO_INCREMENT`);
+            } catch (altErr) {
+              console.error(`⚠️ Could not fix ${tableName}.id:`, altErr.message);
+              // Last resort: try to check and fix using INFORMATION_SCHEMA if accessible
+              try {
+                const [idColumn] = await pool.execute(
+                  `SELECT COLUMN_NAME, EXTRA, COLUMN_TYPE
+                   FROM INFORMATION_SCHEMA.COLUMNS 
+                   WHERE TABLE_SCHEMA = DATABASE() 
+                   AND TABLE_NAME = ? 
+                   AND COLUMN_NAME = 'id'`,
+                  [tableName]
+                );
+
+                if (idColumn.length > 0 && !idColumn[0].EXTRA.includes('auto_increment')) {
+                  const columnType = idColumn[0].COLUMN_TYPE || 'INT UNSIGNED';
+                  await pool.execute(`ALTER TABLE ${tableName} MODIFY id ${columnType} AUTO_INCREMENT`);
+                  console.log(`✅ Migration completed (INFO_SCHEMA method): ${tableName}.id now has AUTO_INCREMENT`);
+                }
+              } catch (infoErr) {
+                console.error(`⚠️ INFORMATION_SCHEMA method also failed for ${tableName}:`, infoErr.message);
+              }
+            }
+          }
+        }
+      } catch (tableErr) {
+        console.log(`⚠️ Could not check ${tableName} table:`, tableErr.message);
+      }
+    }
+
     // Check if color column exists in client_labels table
     const [clientLabelColorColumns] = await pool.execute(
       `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 

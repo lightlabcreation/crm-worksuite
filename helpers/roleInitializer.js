@@ -153,6 +153,42 @@ const getDefaultPermissionsForRole = (roleName, moduleKeys) => {
         can_delete: ['messages', 'tickets', 'documents'].includes(moduleKey)
       };
     }
+    // HR: Employee access with HR-specific permissions
+    else if (roleUpper === 'HR' || roleUpper === 'HUMAN RESOURCES') {
+      perm = {
+        module: moduleKey,
+        can_view: true,
+        // HR can add: tasks, projects, time tracking, events, messages, tickets, documents, attendance, leave requests, employees
+        can_add: ['myTasks', 'myProjects', 'timeTracking', 'events', 'messages', 'tickets', 'documents', 'attendance', 'leaveRequests', 'employees', 'tasks', 'projects'].includes(moduleKey),
+        // HR can edit: tasks, projects, time tracking, events, messages, tickets, documents, employees, attendance
+        can_edit: ['myTasks', 'myProjects', 'timeTracking', 'events', 'messages', 'tickets', 'documents', 'employees', 'attendance', 'tasks', 'projects'].includes(moduleKey),
+        // HR can delete: messages, tickets, documents
+        can_delete: ['messages', 'tickets', 'documents'].includes(moduleKey)
+      };
+    }
+    // SALES: Employee access with sales-specific permissions
+    else if (roleUpper === 'SALES' || roleUpper === 'SALES REP' || roleUpper === 'SALES REPRESENTATIVE') {
+      perm = {
+        module: moduleKey,
+        can_view: true,
+        // Sales can add: tasks, projects, time tracking, events, messages, tickets, documents, leads, clients, proposals, invoices
+        can_add: ['myTasks', 'myProjects', 'timeTracking', 'events', 'messages', 'tickets', 'documents', 'leads', 'clients', 'proposals', 'invoices'].includes(moduleKey),
+        // Sales can edit: tasks, projects, time tracking, events, messages, tickets, documents, leads, clients, proposals
+        can_edit: ['myTasks', 'myProjects', 'timeTracking', 'events', 'messages', 'tickets', 'documents', 'leads', 'clients', 'proposals'].includes(moduleKey),
+        // Sales can delete: messages, tickets, documents
+        can_delete: ['messages', 'tickets', 'documents'].includes(moduleKey)
+      };
+    }
+    // Other employee-type roles (STAFF, WORKER, etc.): Standard employee permissions
+    else if (roleUpper.includes('EMPLOYEE') || roleUpper.includes('STAFF') || roleUpper.includes('WORKER') || roleUpper.includes('MEMBER')) {
+      perm = {
+        module: moduleKey,
+        can_view: true,
+        can_add: ['myTasks', 'myProjects', 'timeTracking', 'events', 'messages', 'tickets', 'documents', 'attendance', 'leaveRequests'].includes(moduleKey),
+        can_edit: ['myTasks', 'myProjects', 'timeTracking', 'events', 'messages', 'tickets', 'documents'].includes(moduleKey),
+        can_delete: ['messages', 'tickets', 'documents'].includes(moduleKey)
+      };
+    }
     // CLIENT: View only for most, limited add/edit
     else if (roleUpper === 'CLIENT') {
       perm = {

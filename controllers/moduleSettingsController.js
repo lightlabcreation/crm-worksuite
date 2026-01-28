@@ -61,6 +61,34 @@ const ensureTableExists = async () => {
       )
     `);
     
+    // Check if id column has AUTO_INCREMENT (fix for existing tables)
+    try {
+      const [idColumn] = await pool.execute(`
+        SELECT COLUMN_NAME, EXTRA
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'module_settings' 
+        AND COLUMN_NAME = 'id'
+      `);
+      
+      if (idColumn.length > 0 && !idColumn[0].EXTRA.includes('auto_increment')) {
+        console.log('📦 Fixing module_settings.id column: Adding AUTO_INCREMENT...');
+        // First, we need to drop the primary key, modify the column, then re-add primary key
+        try {
+          await pool.execute(`ALTER TABLE module_settings MODIFY id INT AUTO_INCREMENT PRIMARY KEY`);
+          console.log('✅ Fixed: id column now has AUTO_INCREMENT');
+        } catch (modifyError) {
+          // If primary key constraint exists, we might need to drop it first
+          console.log('Attempting to fix id column with primary key handling...');
+          // Try a different approach - modify without specifying PRIMARY KEY
+          await pool.execute(`ALTER TABLE module_settings MODIFY id INT AUTO_INCREMENT`);
+          console.log('✅ Fixed: id column now has AUTO_INCREMENT');
+        }
+      }
+    } catch (checkError) {
+      console.log('Note: Could not check/fix id column:', checkError.message);
+    }
+    
     // Add module_permissions column if it doesn't exist (for existing tables)
     try {
       // Check if column exists first
