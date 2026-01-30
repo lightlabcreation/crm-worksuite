@@ -61,31 +61,39 @@ const getAll = async (req, res) => {
 
     // Client filter - handle both client.id and user_id (owner_id)
     if (client_id) {
-      // First check if this is a valid client.id
+      const conditionParts = [];
+      const conditionParams = [];
+
+      // 1. Check if it's a valid client.id
       const [directClient] = await pool.execute(
-        'SELECT id FROM clients WHERE id = ? AND is_deleted = 0',
-        [client_id]
+        'SELECT id FROM clients WHERE id = ? AND company_id = ? AND is_deleted = 0',
+        [client_id, filterCompanyId]
       );
 
       if (directClient.length > 0) {
-        // It's a valid client.id
-        whereClause += ' AND p.client_id = ?';
-        params.push(client_id);
-      } else {
-        // Try to find client by owner_id (user_id)
-        const [clientByOwner] = await pool.execute(
-          'SELECT id FROM clients WHERE owner_id = ? AND company_id = ? AND is_deleted = 0',
-          [client_id, filterCompanyId]
-        );
+        conditionParts.push('p.client_id = ?');
+        conditionParams.push(client_id);
+      }
 
-        if (clientByOwner.length > 0) {
-          whereClause += ' AND p.client_id = ?';
-          params.push(clientByOwner[0].id);
-        } else {
-          // No client found - show projects created by this user OR assigned to them
-          whereClause += ' AND (p.created_by = ? OR p.client_id = ? OR p.project_manager_id = ?)';
-          params.push(client_id, client_id, client_id);
-        }
+      // 2. Check if it's an owner_id (user_id) for clients
+      const [clientsByOwner] = await pool.execute(
+        'SELECT id FROM clients WHERE owner_id = ? AND company_id = ? AND is_deleted = 0',
+        [client_id, filterCompanyId]
+      );
+
+      if (clientsByOwner.length > 0) {
+        const ownerClientIds = clientsByOwner.map(c => c.id);
+        conditionParts.push(`p.client_id IN (${ownerClientIds.map(() => '?').join(',')})`);
+        conditionParams.push(...ownerClientIds);
+      }
+
+      // 3. Check if it's a user_id (created_by, project_manager_id, or client_id as user_id fallback)
+      conditionParts.push('(p.created_by = ? OR p.client_id = ? OR p.project_manager_id = ?)');
+      conditionParams.push(client_id, client_id, client_id);
+
+      if (conditionParts.length > 0) {
+        whereClause += ` AND (${conditionParts.join(' OR ')})`;
+        params.push(...conditionParams);
       }
     }
 

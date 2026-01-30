@@ -97,6 +97,23 @@ If your frontend runs on a different port, update:
 FRONTEND_URL=http://localhost:5173  # Change port if different
 ```
 
+### Step 5: Email (SMTP) – Required in Production
+
+To send invoice/estimate emails in **production**, set these in your server environment (e.g. Railway, Heroku):
+
+```env
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=your-email@gmail.com
+SMTP_PASS=your-app-password
+SMTP_FROM=noreply@yourdomain.com
+```
+
+- **Gmail:** Use an [App Password](https://support.google.com/accounts/answer/185833), not your normal password.
+- **Railway:** Project → Variables → add `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS`, etc.
+- If these are not set in production, "Send Invoice" will return **503** with `code: EMAIL_NOT_CONFIGURED`.
+
 ---
 
 ## Quick Setup Commands

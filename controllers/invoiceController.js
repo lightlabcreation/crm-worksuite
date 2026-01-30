@@ -36,6 +36,39 @@ const normalizeUnit = (unit) => {
 };
 
 /**
+ * Normalize billing_frequency value to valid ENUM values
+ * Valid values: 'Monthly', 'Quarterly', 'Yearly'
+ * Invalid values (like 'Daily', 'Weekly') will be set to NULL
+ */
+const normalizeBillingFrequency = (frequency) => {
+  // Valid ENUM values in the database
+  const validFrequencies = ['Monthly', 'Quarterly', 'Yearly'];
+  
+  if (!frequency) {
+    return null;
+  }
+  
+  // If already valid, return as is (case-sensitive match)
+  if (validFrequencies.includes(frequency)) {
+    return frequency;
+  }
+  
+  // Case-insensitive matching
+  const frequencyLower = String(frequency).toLowerCase().trim();
+  if (frequencyLower === 'monthly' || frequencyLower === 'month') {
+    return 'Monthly';
+  } else if (frequencyLower === 'quarterly' || frequencyLower === 'quarter') {
+    return 'Quarterly';
+  } else if (frequencyLower === 'yearly' || frequencyLower === 'year') {
+    return 'Yearly';
+  } else {
+    // Invalid values like 'Daily', 'Weekly', or any other value -> set to NULL
+    // This prevents the "Data truncated" error
+    return null;
+  }
+};
+
+/**
  * Generate invoice number
  */
 const generateInvoiceNumber = async (companyId) => {
@@ -396,6 +429,10 @@ const create = async (req, res) => {
       effectiveBillingFrequency = frequencyMap[repeat_type] || repeat_type;
     }
     
+    // Normalize billing_frequency to valid ENUM values (Monthly, Quarterly, Yearly)
+    // Invalid values like 'Daily', 'Weekly' will be set to NULL to prevent truncation errors
+    effectiveBillingFrequency = normalizeBillingFrequency(effectiveBillingFrequency);
+    
     // Map cycles to recurring_total_count
     const effectiveRecurringTotalCount = cycles && cycles !== '' ? parseInt(cycles) : (recurring_total_count || null);
     
@@ -653,6 +690,12 @@ const update = async (req, res) => {
     };
     
     handleRecurringFields();
+    
+    // Normalize billing_frequency to valid ENUM values (always, regardless of is_recurring)
+    // This prevents "Data truncated" errors when invalid values are provided
+    if (updateFields.hasOwnProperty('billing_frequency') && columnNames.includes('billing_frequency')) {
+      updateFields.billing_frequency = normalizeBillingFrequency(updateFields.billing_frequency);
+    }
 
     for (const field of allowedFields) {
       if (updateFields.hasOwnProperty(field)) {
@@ -943,11 +986,14 @@ const createRecurring = async (req, res) => {
     // Get created_by from various sources - body, req.userId, or default to 1 (admin)
     const effectiveCreatedBy = created_by || user_id || req.userId || 1;
 
+    // Normalize billing_frequency to valid ENUM values
+    const normalizedBillingFrequency = normalizeBillingFrequency(billing_frequency);
+    
     // Validation
-    if (!billing_frequency || !recurring_start_date || !recurring_total_count || !client_id || !items || items.length === 0) {
+    if (!normalizedBillingFrequency || !recurring_start_date || !recurring_total_count || !client_id || !items || items.length === 0) {
       return res.status(400).json({
         success: false,
-        error: 'billing_frequency, recurring_start_date, recurring_total_count, client_id, and items are required'
+        error: 'billing_frequency must be one of: Monthly, Quarterly, Yearly. recurring_start_date, recurring_total_count, client_id, and items are required'
       });
     }
 
@@ -959,15 +1005,15 @@ const createRecurring = async (req, res) => {
       let dueDate = new Date(startDate);
 
       // Calculate dates based on frequency
-      if (billing_frequency === 'Monthly') {
+      if (normalizedBillingFrequency === 'Monthly') {
         invoiceDate.setMonth(startDate.getMonth() + i);
         dueDate.setMonth(startDate.getMonth() + i);
         dueDate.setDate(dueDate.getDate() + 30);
-      } else if (billing_frequency === 'Quarterly') {
+      } else if (normalizedBillingFrequency === 'Quarterly') {
         invoiceDate.setMonth(startDate.getMonth() + (i * 3));
         dueDate.setMonth(startDate.getMonth() + (i * 3));
         dueDate.setDate(dueDate.getDate() + 90);
-      } else if (billing_frequency === 'Yearly') {
+      } else if (normalizedBillingFrequency === 'Yearly') {
         invoiceDate.setFullYear(startDate.getFullYear() + i);
         dueDate.setFullYear(startDate.getFullYear() + i);
         dueDate.setDate(dueDate.getDate() + 365);
@@ -979,7 +1025,7 @@ const createRecurring = async (req, res) => {
         client_id,
         items,
         is_recurring: true,
-        billing_frequency,
+        billing_frequency: normalizedBillingFrequency,
         recurring_start_date: recurring_start_date,
         recurring_total_count: recurring_total_count
       };
@@ -1238,11 +1284,19 @@ const sendEmail = async (req, res) => {
 
     if (!emailResult.success) {
       console.error('Email sending failed:', emailResult.error);
-      return res.status(500).json({ 
-        success: false, 
+      const isSmtpNotConfigured = (emailResult.error || '').includes('SMTP configuration');
+      if (isSmtpNotConfigured) {
+        return res.status(503).json({
+          success: false,
+          error: 'Email service is not configured. Please set SMTP environment variables (SMTP_HOST, SMTP_USER, SMTP_PASS) on the server.',
+          code: 'EMAIL_NOT_CONFIGURED'
+        });
+      }
+      return res.status(500).json({
+        success: false,
         error: emailResult.error || 'Failed to send invoice email',
         details: process.env.NODE_ENV === 'development' ? emailResult.message : undefined
-    });
+      });
     }
 
     // Update invoice status to 'Sent' if it's Draft

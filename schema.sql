@@ -465,7 +465,7 @@ CREATE TABLE `invoices` (
   `unpaid` DECIMAL(15, 2) DEFAULT 0.00,
   `status` ENUM('Paid', 'Unpaid', 'Partially Paid', 'Overdue', 'Cancelled') DEFAULT 'Unpaid',
   `is_recurring` TINYINT(1) DEFAULT 0,
-  `billing_frequency` ENUM('Monthly', 'Quarterly', 'Yearly') NULL,
+  `billing_frequency` VARCHAR(50) NULL,
   `recurring_start_date` DATE NULL,
   `recurring_total_count` INT NULL,
   `is_time_log_invoice` TINYINT(1) DEFAULT 0,

@@ -208,6 +208,22 @@ const updateRolePermissions = async (req, res) => {
             return res.status(400).json({ success: false, error: "No valid permissions provided" });
         }
 
+        // Ensure role_permissions table has module-based schema (not old permission_id schema)
+        const [columns] = await pool.execute(
+            `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'role_permissions'`
+        );
+        const columnNames = (columns || []).map(c => c.COLUMN_NAME);
+        const hasModule = columnNames.includes('module');
+        const hasPermissionId = columnNames.includes('permission_id');
+        if (!hasModule || hasPermissionId) {
+            return res.status(503).json({
+                success: false,
+                error: "Role permissions table uses old schema (permission_id). Please run migration: backend-12-crm/migrations/alter_role_permissions_to_module_based.sql",
+                code: "ROLE_PERMISSIONS_SCHEMA_MIGRATION_REQUIRED"
+            });
+        }
+
         // Get connection for transaction
         const connection = await pool.getConnection();
         

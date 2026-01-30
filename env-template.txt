@@ -15,6 +15,15 @@ DEFAULT_PAGE_SIZE=10
 MAX_PAGE_SIZE=100
 RATE_LIMIT_WINDOW_MS=900000
 RATE_LIMIT_MAX_REQUESTS=100
+
+# Email (required in production for Send Invoice / Send Estimate / etc.)
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=
+SMTP_PASS=
+SMTP_FROM=noreply@yourdomain.com
+
 LOG_LEVEL=info
 LOG_FILE=./logs/app.log
 SESSION_SECRET=worksuite_session_secret_2025_change_in_production

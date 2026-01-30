@@ -168,11 +168,10 @@ app.use(`${apiBase}/leave-requests`, leaveRequestRoutes);
 app.use(`${apiBase}/notifications`, notificationRoutes);
 // PWA Routes - Must be public for manifest
 app.use(`${apiBase}/pwa`, pwaRoutes);
-app.use(`${apiBase}/notifications`, notificationRoutes);
 app.use(`${apiBase}/notes`, noteRoutes);
 app.use(`${apiBase}/orders`, orderRoutes);
 app.use(`${apiBase}/items`, itemRoutes);
-app.use(`${apiBase}/pwa`, pwaRoutes);
+
 app.use(`${apiBase}/module-settings`, moduleSettingsRoutes);
 app.use(`${apiBase}/activities`, activityRoutes);
 app.use(`${apiBase}/task-labels`, taskLabelRoutes);

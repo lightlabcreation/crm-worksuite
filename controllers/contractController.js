@@ -791,8 +791,16 @@ const sendEmail = async (req, res) => {
 
     if (!emailResult.success) {
       console.error('Email sending failed:', emailResult.error);
-      return res.status(500).json({ 
-        success: false, 
+      const isSmtpNotConfigured = (emailResult.error || '').includes('SMTP configuration');
+      if (isSmtpNotConfigured) {
+        return res.status(503).json({
+          success: false,
+          error: 'Email service is not configured. Please set SMTP environment variables (SMTP_HOST, SMTP_USER, SMTP_PASS) on the server.',
+          code: 'EMAIL_NOT_CONFIGURED'
+        });
+      }
+      return res.status(500).json({
+        success: false,
         error: emailResult.error || 'Failed to send contract email',
         details: process.env.NODE_ENV === 'development' ? emailResult.message : undefined
       });

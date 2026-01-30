@@ -838,7 +838,7 @@ const sendEmail = async (req, res) => {
     }
 
     // Handle CC and BCC from request body
-    await sendEmailUtil({
+    const emailResult = await sendEmailUtil({
       to: recipientEmail,
       cc: req.body.cc || undefined,
       bcc: req.body.bcc || undefined,
@@ -846,6 +846,22 @@ const sendEmail = async (req, res) => {
       html: emailHTML,
       text: `Please view the proposal at: ${publicUrl}`
     });
+
+    if (!emailResult.success) {
+      console.error('Email sending failed:', emailResult.error);
+      const isSmtpNotConfigured = (emailResult.error || '').includes('SMTP configuration');
+      if (isSmtpNotConfigured) {
+        return res.status(503).json({
+          success: false,
+          error: 'Email service is not configured. Please set SMTP environment variables (SMTP_HOST, SMTP_USER, SMTP_PASS) on the server.',
+          code: 'EMAIL_NOT_CONFIGURED'
+        });
+      }
+      return res.status(500).json({
+        success: false,
+        error: emailResult.error || 'Failed to send proposal email'
+      });
+    }
 
     // Update proposal status to 'Sent'
     await pool.execute(
